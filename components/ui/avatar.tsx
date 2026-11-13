@@ -1,0 +1,2 @@
+import { cn } from "@/lib/utils";
+export function Avatar({ name, className }: { name: string; className?: string }) { const words = name.split(" "); const initials = `${words[0]?.[0] ?? ""}${words.at(-1)?.[0] ?? ""}`; return <span aria-label={name} className={cn("inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-xs font-bold text-white", className)}>{initials}</span>; }
