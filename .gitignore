@@ -5,3 +5,8 @@ dist
 .env.local
 *.tsbuildinfo
 api/node_modules
+.agents/
+.claude/
+.codex/
+.gemini/
+skills-lock.json

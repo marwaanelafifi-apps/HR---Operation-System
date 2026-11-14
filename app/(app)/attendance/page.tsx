@@ -1,2 +1,2 @@
-import { AttendancePage } from "@/components/page-kit";
-export default function Page() { return <AttendancePage />; }
+import { AttendanceWorkspace } from "@/components/attendance-workspace";
+export default function Page() { return <AttendanceWorkspace />; }

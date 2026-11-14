@@ -1,2 +1,2 @@
-import { MeetingsPage } from "@/components/page-kit";
-export default function Page() { return <MeetingsPage />; }
+import { MeetingsWorkspace } from "@/components/meetings-workspace";
+export default function Page() { return <MeetingsWorkspace />; }
