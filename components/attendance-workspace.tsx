@@ -7,13 +7,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { distanceMetres, formatDistance, getPosition, loadOffice, loadUnlocks, type GeoFailure, type OfficeLocation } from "@/lib/office-location";
 import { autoDeductDelay, confirmFieldCheckIn, getTodayFieldVisits, onRequestsChanged, openVisitsForUser, type VisitRequest } from "@/lib/requests-store";
+import { calcDelayMinutes, deductionForDelay, deductionLabel, isDayOff, loadWorkSchedule, offDaysInMonth, type WorkSchedule } from "@/lib/work-schedule";
 
 const EMPLOYEE_ID = "ahmed-khalil"; // demo user until real sign-in exists
 const EMPLOYEE_NAME = "Ahmed Khalil";
-const shifts = [
-  { id: "11", label: "11:00 AM – 7:00 PM", startHour: 11 },
-  { id: "12", label: "12:00 PM – 8:00 PM", startHour: 12 },
-];
 
 type Stamp = {
   at: string;
@@ -60,7 +57,6 @@ export function AttendanceWorkspace() {
   const [office, setOffice] = useState<OfficeLocation>({ name: "", radius: "150" });
   const [record, setRecord] = useState<DayRecord>({});
   const [unlocked, setUnlocked] = useState(false);
-  const [shiftId, setShiftId] = useState("11");
   const [busy, setBusy] = useState<"in" | "out" | null>(null);
   const [blocked, setBlocked] = useState<Blocked | null>(null);
   const [dateLabel, setDateLabel] = useState("");
@@ -68,12 +64,13 @@ export function AttendanceWorkspace() {
   const [fieldVisits, setFieldVisits] = useState<{ checkIn: VisitRequest | null; checkOut: VisitRequest | null }>({ checkIn: null, checkOut: null });
   const [stampMode, setStampMode] = useState<"in" | "out" | null>(null);
   const [monthRecords, setMonthRecords] = useState<Record<number, DayRecord>>({});
+  const [workSchedule, setWorkSchedule] = useState<WorkSchedule | null>(null);
 
   useEffect(() => {
     setOffice(loadOffice());
     setRecord(readRecord());
     setUnlocked(Boolean(loadUnlocks()[EMPLOYEE_ID]));
-    try { setShiftId(window.localStorage.getItem("opshub-demo-shift") ?? "11"); } catch { /* storage unavailable */ }
+    setWorkSchedule(loadWorkSchedule());
     setDateLabel(new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric" }).format(new Date()));
     const today = new Date();
     setMonthRecords(getMonthRecords(today.getFullYear(), today.getMonth()));
@@ -88,7 +85,6 @@ export function AttendanceWorkspace() {
     return unsubscribe;
   }, []);
 
-  const shift = shifts.find((s) => s.id === shiftId) ?? shifts[0];
   const hasOffice = office.lat !== undefined && office.lng !== undefined;
   const radius = Number(office.radius) || 150;
   const done = Boolean(record.checkOut);
@@ -125,11 +121,8 @@ export function AttendanceWorkspace() {
       const now = new Date().toISOString();
 
       // Auto-deduct delay from excuse balance if checking in late
-      if (kind === "in" && !fromField && !unlocked) {
-        const checkInTime = new Date(now);
-        const shiftStart = new Date(checkInTime);
-        shiftStart.setHours(shift.startHour, 0, 0, 0);
-        const delayMinutes = Math.round((checkInTime.getTime() - shiftStart.getTime()) / 60000);
+      if (kind === "in" && !fromField && !unlocked && workSchedule) {
+        const delayMinutes = calcDelayMinutes(now, workSchedule);
         if (delayMinutes > 0) {
           autoDeductDelay(EMPLOYEE_NAME, delayMinutes);
         }
@@ -168,17 +161,13 @@ export function AttendanceWorkspace() {
     setBlocked(null);
   }
 
-  function changeShift(id: string) {
-    setShiftId(id);
-    try { window.localStorage.setItem("opshub-demo-shift", id); } catch { /* storage unavailable */ }
-  }
-
   function lateNote() {
-    if (!record.checkIn) return null;
-    const at = new Date(record.checkIn.at);
-    const start = new Date(at); start.setHours(shift.startHour, 0, 0, 0);
-    const late = Math.round((at.getTime() - start.getTime()) / 60000);
-    return late > 0 ? `Late by ${late} min` : "On time";
+    if (!record.checkIn || !workSchedule) return null;
+    const late = calcDelayMinutes(record.checkIn.at, workSchedule);
+    if (late <= 0) return "On time";
+    const frac = deductionForDelay(late, workSchedule);
+    const deduct = frac > 0 ? ` · ${deductionLabel(frac)} deduction` : "";
+    return `Late by ${late} min${deduct}`;
   }
 
   function worked() {
@@ -236,7 +225,7 @@ export function AttendanceWorkspace() {
             {done ? "See you tomorrow" : inside ? `In since ${clock(record.checkIn!.at)}` : "Ready to start?"}
           </h2>
           <p className="mt-2 text-sm text-slate-500">
-            {done ? `Worked ${worked()} today.` : inside ? lateNote() : hasOffice ? `Your shift starts at ${shift.label.split(" – ")[0]}.` : "Waiting for the office location."}
+            {done ? `Worked ${worked()} today.` : inside ? lateNote() : hasOffice ? `Your shift starts at ${workSchedule ? (() => { const d = workSchedule.days[new Date().getDay()]; const h = d.startHour % 12 || 12; const ampm = d.startHour < 12 ? "AM" : "PM"; return `${h}:${String(d.startMinute).padStart(2,"0")} ${ampm}`; })() : "11:00 AM"}.` : "Waiting for the office location."}
           </p>
 
           <div className="mt-8 flex flex-wrap gap-3">
@@ -318,7 +307,7 @@ export function AttendanceWorkspace() {
           <section className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
             <h2 className="text-base font-semibold">Today</h2>
             <dl className="mt-4 space-y-3 text-sm">
-              <Line label="Shift" value={shift.label} />
+              {workSchedule && <Line label="Shift" value={(() => { const d = workSchedule.days[new Date().getDay()]; return d ? `${String(d.startHour % 12 || 12).padStart(1)}:${String(d.startMinute).padStart(2,"0")} ${d.startHour < 12 ? "AM" : "PM"} – ${String(d.endHour % 12 || 12)}:${String(d.endMinute).padStart(2,"0")} ${d.endHour < 12 ? "AM" : "PM"}` : "—"; })()} />}
               <Line label="Check-in" value={record.checkIn ? clock(record.checkIn.at) : "—"} note={record.checkIn ? (record.checkIn.waived ? "Waived by admin" : record.checkIn.kind === "field" ? `At ${record.checkIn.meetingZone}${record.checkIn.projectName ? ` · ${record.checkIn.projectName}` : ""}` : record.checkIn.distance !== null ? `${formatDistance(record.checkIn.distance)} from office${record.checkIn.accuracy ? `, ±${Math.round(record.checkIn.accuracy)} m` : ""}` : undefined) : undefined} />
               <Line label="Check-out" value={record.checkOut ? clock(record.checkOut.at) : "—"} note={record.checkOut ? (record.checkOut.kind === "field" ? `At ${record.checkOut.meetingZone}${record.checkOut.projectName ? ` · ${record.checkOut.projectName}` : ""}` : undefined) : undefined} />
               <Line label="Worked" value={worked()} />
@@ -331,66 +320,49 @@ export function AttendanceWorkspace() {
             <h2 className="text-base font-semibold">Office</h2>
             <p className="mt-2 text-sm text-slate-700 dark:text-slate-200">{office.name || "—"}</p>
             <p className="mt-0.5 text-xs text-slate-500">{hasOffice ? `Check in within ${radius} m` : "Location not set"}</p>
-            <label className="mt-4 block text-xs font-medium text-slate-500" htmlFor="shift">Assigned shift (set by admin)</label>
-            <select id="shift" value={shiftId} onChange={(e) => changeShift(e.target.value)} className="mt-1 w-full rounded-lg border border-[#DCE9E6] bg-transparent px-3 py-2 text-sm dark:border-slate-700">
-              {shifts.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-            </select>
+            {workSchedule && (
+              <p className="mt-3 text-xs text-slate-400">
+                Schedule configured by admin. <Link href="/admin" className="font-semibold text-[#0B4F4B] hover:underline dark:text-[#8FD4C6]">Edit in Admin → Work schedule</Link>
+              </p>
+            )}
           </section>
         </aside>
       </div>
         </>
       )}
 
-      {tab === "month" && ready && (
-        <MonthView monthRecords={monthRecords} shift={shift} />
+      {tab === "month" && ready && workSchedule && (
+        <MonthView monthRecords={monthRecords} workSchedule={workSchedule} />
       )}
     </div>
   );
 }
 
-function MonthView({ monthRecords, shift }: { monthRecords: Record<number, DayRecord>; shift: typeof shifts[0] }) {
+function MonthView({ monthRecords, workSchedule }: { monthRecords: Record<number, DayRecord>; workSchedule: WorkSchedule }) {
   const today = new Date();
-  const isCurrentMonth = true; // Only current month allowed per security rule
-
-  if (!isCurrentMonth) {
-    return (
-      <div className="rounded-2xl border border-rose-200 bg-rose-50 p-10 text-center dark:border-rose-900/60 dark:bg-rose-950/30">
-        <p className="text-sm font-semibold text-rose-900 dark:text-rose-100">Unauthorized access</p>
-        <p className="mt-1 text-sm text-rose-800 dark:text-rose-200">You can only view attendance for the current month.</p>
-      </div>
-    );
-  }
-
-  const daysInMonth = Object.keys(monthRecords).length;
-  const workdays = [1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19, 22, 23, 24, 25, 26, 29, 30];
+  const year = today.getFullYear();
+  const month = today.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const offDays = offDaysInMonth(year, month, workSchedule);
 
   const stats = Object.entries(monthRecords).reduce((acc, [dayStr, record]) => {
     const dayNum = parseInt(dayStr, 10);
-    const isWorkday = workdays.includes(dayNum);
+    const isWorkday = !offDays.has(dayNum);
 
     if (record.checkIn) {
       acc.daysPresent++;
-
-      // Check for delay
       if (isWorkday) {
-        const checkInTime = new Date(record.checkIn.at);
-        const shiftStart = new Date(checkInTime);
-        shiftStart.setHours(shift.startHour, 0, 0, 0);
-        const delayMinutes = Math.round((checkInTime.getTime() - shiftStart.getTime()) / 60000);
-        if (delayMinutes > 0) {
-          acc.lateDays++;
-          acc.totalLateMinutes += delayMinutes;
-        }
+        const dm = calcDelayMinutes(record.checkIn.at, workSchedule);
+        if (dm > 0) { acc.lateDays++; acc.totalLateMinutes += dm; }
       }
     }
     if (record.checkIn && record.checkOut) {
-      const minutes = Math.round((new Date(record.checkOut.at).getTime() - new Date(record.checkIn.at).getTime()) / 60000);
-      acc.totalMinutes += minutes;
+      acc.totalMinutes += Math.round((new Date(record.checkOut.at).getTime() - new Date(record.checkIn.at).getTime()) / 60000);
     }
     return acc;
   }, { daysPresent: 0, lateDays: 0, totalLateMinutes: 0, totalMinutes: 0 });
 
-  const absenceDays = workdays.filter(d => d <= daysInMonth && !monthRecords[d]?.checkIn);
+  const absenceDays = Array.from({ length: daysInMonth }, (_, i) => i + 1).filter(d => !offDays.has(d) && !monthRecords[d]?.checkIn);
 
   return (
     <div className="space-y-6">
@@ -428,70 +400,42 @@ function MonthView({ monthRecords, shift }: { monthRecords: Record<number, DayRe
           {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
             <div key={day} className="text-center text-xs font-semibold text-slate-500 py-2">{day}</div>
           ))}
+          {/* Empty cells for first-day offset */}
+          {Array.from({ length: new Date(year, month, 1).getDay() }, (_, i) => <div key={`e${i}`} />)}
           {Array.from({ length: daysInMonth }, (_, i) => {
             const dayNum = i + 1;
-            const record = monthRecords[dayNum];
+            const rec = monthRecords[dayNum];
             const isToday = dayNum === today.getDate();
-            const isWorkday = workdays.includes(dayNum);
+            const isOff = offDays.has(dayNum);
+            const dm = rec?.checkIn && !isOff ? calcDelayMinutes(rec.checkIn.at, workSchedule) : 0;
+            const deductFrac = dm > 0 ? deductionForDelay(dm, workSchedule) : 0;
 
-            // Calculate delay if checked in late
-            let delayMinutes = 0;
-            if (record?.checkIn && isWorkday) {
-              const checkInTime = new Date(record.checkIn.at);
-              const shiftStart = new Date(checkInTime);
-              shiftStart.setHours(shift.startHour, 0, 0, 0);
-              delayMinutes = Math.round((checkInTime.getTime() - shiftStart.getTime()) / 60000);
-            }
-
-            let bgColor = "bg-white dark:bg-slate-800";
-            let borderColor = "border-[#DCE9E6] dark:border-slate-700";
-            let textColor = "text-slate-900 dark:text-slate-100";
-
-            if (!isWorkday) {
-              bgColor = "bg-slate-100 dark:bg-slate-700";
-              textColor = "text-slate-400";
-            } else if (delayMinutes > 0) {
-              bgColor = "bg-amber-50 dark:bg-amber-950/30";
-              textColor = "text-amber-900 dark:text-amber-100";
-            } else if (record?.checkIn && record?.checkOut) {
-              bgColor = "bg-emerald-50 dark:bg-emerald-950/30";
-              textColor = "text-emerald-900 dark:text-emerald-100";
-            } else if (record?.checkIn) {
-              bgColor = "bg-blue-50 dark:bg-blue-950/30";
-              textColor = "text-blue-900 dark:text-blue-100";
-            } else if (isWorkday) {
-              bgColor = "bg-rose-50 dark:bg-rose-950/30";
-              textColor = "text-rose-900 dark:text-rose-100";
-            }
-
-            if (isToday) {
-              borderColor = "border-[#0B4F4B] dark:border-[#8FD4C6]";
-            }
+            const bgColor = isOff ? "bg-slate-100 dark:bg-slate-700" :
+              dm > 0 ? "bg-amber-50 dark:bg-amber-950/30" :
+              rec?.checkIn && rec?.checkOut ? "bg-emerald-50 dark:bg-emerald-950/30" :
+              rec?.checkIn ? "bg-blue-50 dark:bg-blue-950/30" :
+              "bg-rose-50 dark:bg-rose-950/30";
+            const textColor = isOff ? "text-slate-400" :
+              dm > 0 ? "text-amber-900 dark:text-amber-100" :
+              rec?.checkIn && rec?.checkOut ? "text-emerald-900 dark:text-emerald-100" :
+              rec?.checkIn ? "text-blue-900 dark:text-blue-100" :
+              "text-rose-900 dark:text-rose-100";
+            const borderColor = isToday ? "border-[#0B4F4B] dark:border-[#8FD4C6]" : "border-[#DCE9E6] dark:border-slate-700";
 
             return (
-              <div
-                key={dayNum}
-                className={`rounded-lg border ${borderColor} ${bgColor} p-3 text-center min-h-[100px] flex flex-col justify-between`}
-              >
+              <div key={dayNum} className={`rounded-lg border ${borderColor} ${bgColor} p-3 text-center min-h-[100px] flex flex-col justify-between`}>
                 <p className={`text-sm font-semibold ${textColor} ${isToday ? "ring-2 ring-[#0B4F4B] rounded-full w-6 h-6 flex items-center justify-center mx-auto" : ""}`}>
                   {dayNum}
                 </p>
-                {record?.checkIn && (
-                  <div className="text-xs">
-                    {delayMinutes > 0 && (
-                      <p className="mb-1 rounded px-1.5 py-0.5 bg-amber-200 text-amber-900 dark:bg-amber-900 dark:text-amber-100 font-semibold text-xs">
-                        {delayMinutes} min late
+                {rec?.checkIn && (
+                  <div className="text-xs space-y-0.5">
+                    {dm > 0 && (
+                      <p className="rounded px-1.5 py-0.5 bg-amber-200 text-amber-900 dark:bg-amber-900 dark:text-amber-100 font-semibold">
+                        +{dm}m{deductFrac > 0 ? ` · ${deductionLabel(deductFrac)}` : ""}
                       </p>
                     )}
-                    <p className={textColor}>
-                      {clock(record.checkIn.at)}
-                      {record.checkOut && ` → ${clock(record.checkOut.at)}`}
-                    </p>
-                    {record.checkOut && (
-                      <p className="text-xs text-slate-500">
-                        {Math.floor((new Date(record.checkOut.at).getTime() - new Date(record.checkIn.at).getTime()) / 3600000)}h
-                      </p>
-                    )}
+                    <p className={textColor}>{clock(rec.checkIn.at)}{rec.checkOut && ` → ${clock(rec.checkOut.at)}`}</p>
+                    {rec.checkOut && <p className="text-slate-500">{Math.floor((new Date(rec.checkOut.at).getTime() - new Date(rec.checkIn.at).getTime()) / 3600000)}h</p>}
                   </div>
                 )}
               </div>

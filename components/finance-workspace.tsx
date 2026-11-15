@@ -5,6 +5,7 @@ import { CalendarDays, ChevronLeft, ChevronRight, Download, Receipt, Users } fro
 import { Badge } from "@/components/ui/badge";
 import { loadRequests, onRequestsChanged, type VisitRequest } from "@/lib/requests-store";
 import { employees } from "@/lib/mock-data";
+import { calcDelayMinutes, deductionForDelay, deductionLabel, isDayOff, loadWorkSchedule, offDaysInMonth, type WorkSchedule } from "@/lib/work-schedule";
 
 type FinanceTab = "expenses" | "attendance";
 
@@ -12,8 +13,6 @@ type FinanceTab = "expenses" | "attendance";
 type Stamp = { at: string; distance: number | null; accuracy?: number | null; waived: boolean; kind?: "office" | "field"; meetingZone?: string; projectName?: string };
 type DayRecord = { checkIn?: Stamp; checkOut?: Stamp };
 
-const SHIFT_START_HOUR = 11; // default shift for delay calculation
-const workdays = [1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19, 22, 23, 24, 25, 26, 29, 30];
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -31,26 +30,24 @@ function getMonthRecords(year: number, month: number): Record<number, DayRecord>
   }
   return result;
 }
-function delayMins(record: DayRecord, dayNum: number): number {
-  if (!record.checkIn || !workdays.includes(dayNum)) return 0;
-  const ci = new Date(record.checkIn.at);
-  const start = new Date(ci); start.setHours(SHIFT_START_HOUR, 0, 0, 0);
-  return Math.max(0, Math.round((ci.getTime() - start.getTime()) / 60000));
+function delayMinsForRecord(record: DayRecord, schedule: WorkSchedule): number {
+  if (!record.checkIn) return 0;
+  return calcDelayMinutes(record.checkIn.at, schedule);
 }
 function hoursWorked(record: DayRecord): number {
   if (!record.checkIn || !record.checkOut) return 0;
   return (new Date(record.checkOut.at).getTime() - new Date(record.checkIn.at).getTime()) / 3600000;
 }
-function dayStatus(record: DayRecord, dayNum: number, isWorkday: boolean, isFuture: boolean): "present" | "late" | "absent" | "weekend" | "future" {
+function dayStatus(record: DayRecord, isWorkday: boolean, isFuture: boolean, schedule: WorkSchedule): "present" | "late" | "absent" | "weekend" | "future" {
   if (!isWorkday) return "weekend";
   if (isFuture) return "future";
   if (!record.checkIn) return "absent";
-  if (delayMins(record, dayNum) > 0) return "late";
+  if (delayMinsForRecord(record, schedule) > 0) return "late";
   return "present";
 }
 
 // ── CSV helpers ───────────────────────────────────────────────────────────────
-function buildCsvRows(employeeName: string, year: number, month: number): string[][] {
+function buildCsvRows(employeeName: string, year: number, month: number, schedule: WorkSchedule): string[][] {
   const records = getMonthRecords(year, month);
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const today = new Date();
@@ -58,11 +55,12 @@ function buildCsvRows(employeeName: string, year: number, month: number): string
   for (let d = 1; d <= daysInMonth; d++) {
     const ds = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
     const r = records[d] ?? {};
-    const isWorkday = workdays.includes(d);
+    const isWorkday = !isDayOff(new Date(ds), schedule);
     const isFuture = new Date(ds) > today;
-    const delay = delayMins(r, d);
+    const delay = delayMinsForRecord(r, schedule);
     const hrs = hoursWorked(r);
-    const status = dayStatus(r, d, isWorkday, isFuture);
+    const status = dayStatus(r, isWorkday, isFuture, schedule);
+    const deduct = delay > 0 ? deductionForDelay(delay, schedule) : 0;
     rows.push([
       employeeName,
       ds,
@@ -71,6 +69,7 @@ function buildCsvRows(employeeName: string, year: number, month: number): string
       r.checkOut ? clockFmt(r.checkOut.at) : "",
       hrs > 0 ? hrs.toFixed(2) : "",
       delay > 0 ? String(delay) : "",
+      deduct > 0 ? deductionLabel(deduct) : "",
       status === "weekend" ? "Weekend" : status === "future" ? "" : status.charAt(0).toUpperCase() + status.slice(1),
     ]);
   }
@@ -85,7 +84,7 @@ function downloadCsv(filename: string, header: string[], rows: string[][]) {
   URL.revokeObjectURL(url);
 }
 
-const CSV_HEADER = ["Employee", "Date", "Day", "Check-In", "Check-Out", "Hours Worked", "Delay (min)", "Status"];
+const CSV_HEADER = ["Employee", "Date", "Day", "Check-In", "Check-Out", "Hours Worked", "Delay (min)", "Deduction", "Status"];
 
 // ── Expense section ───────────────────────────────────────────────────────────
 function parseDateTime(date: string, time: string) { return new Date(`${date}T${time || "00:00"}`); }
@@ -209,9 +208,14 @@ function AttendanceSection() {
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
   const [monthRecords, setMonthRecords] = useState<Record<number, DayRecord>>({});
+  const [schedule, setSchedule] = useState<WorkSchedule | null>(null);
   const [ready, setReady] = useState(false);
 
-  useEffect(() => { setMonthRecords(getMonthRecords(viewYear, viewMonth)); setReady(true); }, [viewYear, viewMonth]);
+  useEffect(() => {
+    setSchedule(loadWorkSchedule());
+    setMonthRecords(getMonthRecords(viewYear, viewMonth));
+    setReady(true);
+  }, [viewYear, viewMonth]);
 
   function prevMonth() {
     if (viewMonth === 0) { setViewYear(y => y - 1); setViewMonth(11); }
@@ -225,17 +229,19 @@ function AttendanceSection() {
 
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
   const firstDayOfWeek = new Date(viewYear, viewMonth, 1).getDay(); // 0=Sun
+  const offDays = useMemo(() => schedule ? offDaysInMonth(viewYear, viewMonth, schedule) : new Set<number>(), [schedule, viewYear, viewMonth]);
 
   const stats = useMemo(() => {
+    if (!schedule) return { present: 0, late: 0, absent: 0, lateMinTotal: 0, hoursTotal: 0 };
     return Object.entries(monthRecords).reduce((acc, [dayStr, r]) => {
       const d = parseInt(dayStr, 10);
-      const isWorkday = workdays.includes(d);
+      const isWorkday = !offDays.has(d);
       const ds = `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
       const isFuture = new Date(ds) > today;
       if (isFuture) return acc;
       if (r.checkIn) {
         acc.present++;
-        const dm = delayMins(r, d);
+        const dm = delayMinsForRecord(r, schedule);
         if (dm > 0 && isWorkday) { acc.late++; acc.lateMinTotal += dm; }
       } else if (isWorkday) {
         acc.absent++;
@@ -243,17 +249,17 @@ function AttendanceSection() {
       acc.hoursTotal += hoursWorked(r);
       return acc;
     }, { present: 0, late: 0, absent: 0, lateMinTotal: 0, hoursTotal: 0 });
-  }, [monthRecords, viewYear, viewMonth, today]);
+  }, [monthRecords, viewYear, viewMonth, today, offDays, schedule]);
 
   function handleExportSingle() {
-    const rows = buildCsvRows(selectedEmp, viewYear, viewMonth);
+    if (!schedule) return;
+    const rows = buildCsvRows(selectedEmp, viewYear, viewMonth, schedule);
     downloadCsv(`attendance-${selectedEmp.replace(/ /g, "-")}-${viewYear}-${String(viewMonth + 1).padStart(2, "0")}.csv`, CSV_HEADER, rows);
   }
   function handleExportAll() {
+    if (!schedule) return;
     const allRows: string[][] = [];
-    employees.forEach(emp => {
-      allRows.push(...buildCsvRows(emp.name, viewYear, viewMonth));
-    });
+    employees.forEach(emp => { allRows.push(...buildCsvRows(emp.name, viewYear, viewMonth, schedule)); });
     downloadCsv(`attendance-all-${viewYear}-${String(viewMonth + 1).padStart(2, "0")}.csv`, CSV_HEADER, allRows);
   }
 
@@ -354,10 +360,11 @@ function AttendanceSection() {
               const r = monthRecords[dayNum] ?? {};
               const ds = `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-${String(dayNum).padStart(2, "0")}`;
               const isFuture = new Date(ds) > today;
-              const isWorkday = workdays.includes(dayNum);
+              const isWorkday = !offDays.has(dayNum);
               const isToday = isCurrentMonth && dayNum === today.getDate();
-              const delay = delayMins(r, dayNum);
-              const status = dayStatus(r, dayNum, isWorkday, isFuture);
+              const delay = schedule ? delayMinsForRecord(r, schedule) : 0;
+              const deduct = delay > 0 && schedule ? deductionForDelay(delay, schedule) : 0;
+              const status = schedule ? dayStatus(r, isWorkday, isFuture, schedule) : "future";
               const hrs = hoursWorked(r);
 
               const bg =
@@ -382,7 +389,7 @@ function AttendanceSection() {
                   </span>
                   {delay > 0 && (
                     <span className="mt-0.5 inline-block rounded px-1 py-0.5 text-[10px] font-semibold bg-amber-200 text-amber-900 dark:bg-amber-900 dark:text-amber-100 leading-tight">
-                      +{delay}m
+                      +{delay}m{deduct > 0 ? ` · ${deductionLabel(deduct)}` : ""}
                     </span>
                   )}
                   {r.checkIn && (
@@ -422,8 +429,9 @@ function AttendanceSection() {
                   const d = parseInt(dayStr, 10);
                   const ds = `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
                   if (new Date(ds) > today) return acc;
-                  const isWorkday = workdays.includes(d);
-                  if (r.checkIn) { acc.present++; if (delayMins(r, d) > 0 && isWorkday) acc.late++; acc.hours += hoursWorked(r); }
+                  const isWorkday = !offDays.has(d);
+                  const dm = schedule ? delayMinsForRecord(r, schedule) : 0;
+                  if (r.checkIn) { acc.present++; if (dm > 0 && isWorkday) acc.late++; acc.hours += hoursWorked(r); }
                   else if (isWorkday) acc.absent++;
                   return acc;
                 }, { present: 0, late: 0, absent: 0, hours: 0 });

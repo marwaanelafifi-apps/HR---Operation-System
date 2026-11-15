@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { getPosition, isShortMapsLink, loadOffice, parseCoordinates, loadUnlocks, saveOffice, saveUnlocks, type GeoFailure } from "@/lib/office-location";
-import { Check, Lock, MapPin, Plus, Shield, Trash2, Unlock, X } from "lucide-react";
+import { loadWorkSchedule, saveWorkSchedule, DEFAULT_SCHEDULE, DAY_NAMES_FULL, formatDayHours, type WorkSchedule, type DaySchedule, type DeductionRule, type SaturdayOffRule } from "@/lib/work-schedule";
+import { Check, Clock, Lock, MapPin, Plus, Shield, Trash2, Unlock, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { zones as defaultZones, attendanceUnlocks as defaultUnlocks } from "@/lib/mock-data";
 
-type Tab = "office" | "zones" | "attendance" | "permissions";
+type Tab = "office" | "zones" | "attendance" | "schedule" | "permissions";
 
 // Role × Permission matrix
 const ROLES = ["CEO / Owner", "Finance", "Sales Manager", "Broker", "Operations Admin", "Marketeer"];
@@ -38,7 +39,7 @@ export function AdminPanel() {
     <div>
       {/* Tab bar */}
       <div className="mb-6 flex max-w-full gap-1 overflow-x-auto rounded-2xl border border-[#DCE9E6] bg-white p-1 shadow-sm dark:border-slate-800 dark:bg-slate-900 w-fit">
-        {([["office", "Office location"], ["zones", "Zones"], ["attendance", "Attendance locks"], ["permissions", "Role permissions"]] as [Tab, string][]).map(([key, label]) => (
+        {([["office", "Office location"], ["zones", "Zones"], ["attendance", "Attendance locks"], ["schedule", "Work schedule"], ["permissions", "Role permissions"]] as [Tab, string][]).map(([key, label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -52,6 +53,7 @@ export function AdminPanel() {
       {tab === "office" && <OfficeTab />}
       {tab === "zones" && <ZonesTab />}
       {tab === "attendance" && <AttendanceTab />}
+      {tab === "schedule" && <ScheduleTab />}
       {tab === "permissions" && <PermissionsTab />}
     </div>
   );
@@ -335,6 +337,237 @@ function AttendanceTab() {
       <div className="border-t border-[#DCE9E6] bg-[#F5F8F7] px-6 py-4 text-xs text-slate-500 dark:border-slate-800 dark:bg-slate-800">
         <Shield className="mb-1 h-4 w-4 text-[#6C807C]" />
         Each unlock is logged with a timestamp. Unlocked employees can check in from any location; this is flagged in their attendance record. Changes here do not affect outside meeting GPS verification.
+      </div>
+    </div>
+  );
+}
+
+/* ── Work schedule ── */
+function toTimeString(h: number, m: number) { return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`; }
+function fromTimeString(val: string): { hour: number; minute: number } {
+  const [h, m] = val.split(":").map(Number);
+  return { hour: isNaN(h) ? 11 : h, minute: isNaN(m) ? 0 : m };
+}
+
+const SAT_RULES: { value: SaturdayOffRule; label: string }[] = [
+  { value: "2nd_4th", label: "2nd and 4th Saturdays off (default)" },
+  { value: "1st_3rd", label: "1st and 3rd Saturdays off" },
+  { value: "all",     label: "All Saturdays off" },
+  { value: "none",    label: "No Saturdays off (all work)" },
+];
+
+function ScheduleTab() {
+  const [schedule, setSchedule] = useState<WorkSchedule>(DEFAULT_SCHEDULE);
+  const [saved, setSaved] = useState(false);
+  const [newRule, setNewRule] = useState<Omit<DeductionRule, "label">>({ minutesLate: 45, deductFraction: 0.75 });
+
+  useEffect(() => { setSchedule(loadWorkSchedule()); }, []);
+
+  function updateDay(dow: number, patch: Partial<DaySchedule>) {
+    setSchedule(s => ({ ...s, days: { ...s.days, [dow]: { ...s.days[dow], ...patch } } }));
+    setSaved(false);
+  }
+
+  function handleStartTime(dow: number, val: string) {
+    const { hour, minute } = fromTimeString(val);
+    updateDay(dow, { startHour: hour, startMinute: minute });
+  }
+  function handleEndTime(dow: number, val: string) {
+    const { hour, minute } = fromTimeString(val);
+    updateDay(dow, { endHour: hour, endMinute: minute });
+  }
+
+  function addDeductionRule() {
+    if (newRule.minutesLate <= 0 || newRule.deductFraction <= 0) return;
+    const h = Math.floor(11 + newRule.minutesLate / 60);
+    const m = (11 * 60 + newRule.minutesLate) % 60;
+    const ampm = h < 12 ? "AM" : "PM"; const h12 = h % 12 === 0 ? 12 : h % 12;
+    const label = `${h12}:${String(m).padStart(2,"0")} ${ampm} — ${newRule.deductFraction >= 1 ? "1 day" : newRule.deductFraction >= 0.5 ? "½ day" : "¼ day"}`;
+    setSchedule(s => ({ ...s, deductionRules: [...s.deductionRules, { ...newRule, label }].sort((a,b)=>a.minutesLate-b.minutesLate) }));
+    setSaved(false);
+  }
+  function removeDeductionRule(idx: number) {
+    setSchedule(s => ({ ...s, deductionRules: s.deductionRules.filter((_, i) => i !== idx) }));
+    setSaved(false);
+  }
+
+  function handleSave() {
+    saveWorkSchedule(schedule);
+    setSaved(true);
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Per-day hours */}
+      <div className="rounded-3xl border border-[#DCE9E6] bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="border-b border-[#DCE9E6] px-6 py-5 dark:border-slate-800">
+          <h2 className="text-base font-semibold text-slate-950 dark:text-white">Office hours per day</h2>
+          <p className="mt-0.5 text-sm text-slate-500">Set the shift start and end for each day of the week. The start time is used to calculate delays.</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[560px] text-sm">
+            <thead>
+              <tr className="border-b border-[#DCE9E6] dark:border-slate-800">
+                {["Day", "Start", "End", "Hours", "Day off"].map(h => (
+                  <th key={h} className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#DCE9E6] dark:divide-slate-800">
+              {[0,1,2,3,4,5,6].map(dow => {
+                const day = schedule.days[dow];
+                const isSat = dow === 6; const isFri = dow === 5;
+                return (
+                  <tr key={dow} className={`transition ${day.isOff ? "opacity-50" : "hover:bg-[#F5F8F7] dark:hover:bg-slate-800/50"}`}>
+                    <td className="px-5 py-3 font-medium text-slate-900 dark:text-white">{DAY_NAMES_FULL[dow]}{isSat ? " *" : ""}</td>
+                    <td className="px-5 py-3">
+                      <input type="time" value={toTimeString(day.startHour, day.startMinute)}
+                        disabled={day.isOff}
+                        onChange={e => handleStartTime(dow, e.target.value)}
+                        className="rounded-lg border border-[#DCE9E6] bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[#0B4F4B] disabled:opacity-40 dark:border-slate-700" />
+                    </td>
+                    <td className="px-5 py-3">
+                      <input type="time" value={toTimeString(day.endHour, day.endMinute)}
+                        disabled={day.isOff}
+                        onChange={e => handleEndTime(dow, e.target.value)}
+                        className="rounded-lg border border-[#DCE9E6] bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[#0B4F4B] disabled:opacity-40 dark:border-slate-700" />
+                    </td>
+                    <td className="px-5 py-3 text-slate-500 text-xs">{day.isOff ? "—" : formatDayHours(day)}</td>
+                    <td className="px-5 py-3">
+                      <button
+                        onClick={() => updateDay(dow, { isOff: !day.isOff })}
+                        title={isFri ? "Friday is off by default; toggle to make it a workday" : undefined}
+                        className={`relative h-6 w-11 rounded-full p-0.5 transition ${day.isOff ? "bg-rose-400" : "bg-[#0B4F4B]"}`}
+                      >
+                        <span className={`block h-5 w-5 rounded-full bg-white shadow transition-transform ${day.isOff ? "translate-x-5" : ""}`} />
+                      </button>
+                      {isSat && <span className="ml-2 text-xs text-slate-400">see rule below</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <p className="border-t border-[#DCE9E6] px-6 py-3 text-xs text-slate-400 dark:border-slate-800">* Saturday follows the Saturday rule below unless the row is toggled off (always off).</p>
+      </div>
+
+      {/* Saturday rule */}
+      <div className="rounded-3xl border border-[#DCE9E6] bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="border-b border-[#DCE9E6] px-6 py-5 dark:border-slate-800">
+          <h2 className="text-base font-semibold text-slate-950 dark:text-white">Saturday off rule</h2>
+          <p className="mt-0.5 text-sm text-slate-500">Which Saturdays are non-working days each month.</p>
+        </div>
+        <div className="space-y-3 p-6">
+          {SAT_RULES.map(r => (
+            <label key={r.value} className={`flex cursor-pointer items-center gap-3 rounded-2xl border p-4 transition ${schedule.saturdayOffRule === r.value ? "border-[#0B4F4B] bg-[#E8F3F1] dark:border-[#8FD4C6] dark:bg-[#133E3C]" : "border-[#DCE9E6] hover:border-[#0B4F4B]/40 dark:border-slate-700"}`}>
+              <input type="radio" name="satRule" value={r.value} checked={schedule.saturdayOffRule === r.value}
+                onChange={() => { setSchedule(s => ({ ...s, saturdayOffRule: r.value })); setSaved(false); }}
+                className="accent-[#0B4F4B]" />
+              <span className="text-sm font-medium text-slate-900 dark:text-white">{r.label}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {/* Deduction rules */}
+      <div className="rounded-3xl border border-[#DCE9E6] bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="border-b border-[#DCE9E6] px-6 py-5 dark:border-slate-800">
+          <h2 className="text-base font-semibold text-slate-950 dark:text-white">Late arrival deductions</h2>
+          <p className="mt-0.5 text-sm text-slate-500">When an employee checks in after the shift start, these thresholds determine the salary deduction. The highest matching rule applies.</p>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[420px] text-sm">
+            <thead>
+              <tr className="border-b border-[#DCE9E6] dark:border-slate-800">
+                {["Late by (min)", "Approx. check-in time", "Deduction", ""].map(h => (
+                  <th key={h} className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#DCE9E6] dark:divide-slate-800">
+              {schedule.deductionRules.map((rule, idx) => {
+                const totalMin = 11 * 60 + rule.minutesLate;
+                const h = Math.floor(totalMin / 60); const m = totalMin % 60;
+                const ampm = h < 12 ? "AM" : "PM"; const h12 = h % 12 === 0 ? 12 : h % 12;
+                return (
+                  <tr key={idx} className="hover:bg-[#F5F8F7] dark:hover:bg-slate-800/50">
+                    <td className="px-5 py-3">
+                      <input type="number" min={1} max={480} value={rule.minutesLate}
+                        onChange={e => {
+                          const mins = parseInt(e.target.value, 10);
+                          if (!isNaN(mins) && mins > 0) {
+                            const updated = [...schedule.deductionRules];
+                            updated[idx] = { ...rule, minutesLate: mins };
+                            setSchedule(s => ({ ...s, deductionRules: updated.sort((a,b)=>a.minutesLate-b.minutesLate) }));
+                            setSaved(false);
+                          }
+                        }}
+                        className="w-20 rounded-lg border border-[#DCE9E6] bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[#0B4F4B] dark:border-slate-700" />
+                    </td>
+                    <td className="px-5 py-3 text-slate-500">{h12}:{String(m).padStart(2,"0")} {ampm}</td>
+                    <td className="px-5 py-3">
+                      <select value={rule.deductFraction}
+                        onChange={e => {
+                          const frac = parseFloat(e.target.value);
+                          const updated = [...schedule.deductionRules];
+                          updated[idx] = { ...rule, deductFraction: frac };
+                          setSchedule(s => ({ ...s, deductionRules: updated }));
+                          setSaved(false);
+                        }}
+                        className="rounded-lg border border-[#DCE9E6] bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[#0B4F4B] dark:border-slate-700">
+                        <option value={0.25}>¼ day (0.25)</option>
+                        <option value={0.50}>½ day (0.50)</option>
+                        <option value={0.75}>¾ day (0.75)</option>
+                        <option value={1.00}>1 day (1.00)</option>
+                      </select>
+                    </td>
+                    <td className="px-5 py-3">
+                      <button onClick={() => removeDeductionRule(idx)} className="text-slate-300 hover:text-rose-500 dark:text-slate-600"><Trash2 className="h-4 w-4" /></button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Add new rule */}
+        <div className="flex flex-wrap items-end gap-3 border-t border-[#DCE9E6] p-5 dark:border-slate-800">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-500">Minutes late</label>
+            <input type="number" min={1} max={480} value={newRule.minutesLate}
+              onChange={e => setNewRule(r => ({ ...r, minutesLate: parseInt(e.target.value,10)||0 }))}
+              className="w-24 rounded-lg border border-[#DCE9E6] bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[#0B4F4B] dark:border-slate-700" />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-500">Deduction</label>
+            <select value={newRule.deductFraction}
+              onChange={e => setNewRule(r => ({ ...r, deductFraction: parseFloat(e.target.value) }))}
+              className="rounded-lg border border-[#DCE9E6] bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[#0B4F4B] dark:border-slate-700">
+              <option value={0.25}>¼ day</option>
+              <option value={0.50}>½ day</option>
+              <option value={0.75}>¾ day</option>
+              <option value={1.00}>1 day</option>
+            </select>
+          </div>
+          <Button onClick={addDeductionRule} className="bg-[#0B4F4B] text-white hover:bg-[#063C39]"><Plus className="h-4 w-4" />Add rule</Button>
+        </div>
+
+        <div className="rounded-b-3xl border-t border-[#DCE9E6] bg-[#F5F8F7] px-6 py-3 dark:border-slate-800 dark:bg-slate-800">
+          <div className="flex items-center gap-2 text-xs text-slate-500">
+            <Clock className="h-3.5 w-3.5" />
+            Delays covered by an employee&apos;s 4-hour monthly excuse balance reduce or eliminate the salary deduction. Unused balance resets on the 1st of each month.
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <Button onClick={handleSave} className="bg-[#0B4F4B] text-white hover:bg-[#063C39]">
+          {saved ? <><Check className="h-4 w-4" />Saved</> : "Save schedule"}
+        </Button>
+        <span className="text-xs text-slate-400">Demo only — saved in this browser. Changes affect all attendance and finance views immediately.</span>
       </div>
     </div>
   );
