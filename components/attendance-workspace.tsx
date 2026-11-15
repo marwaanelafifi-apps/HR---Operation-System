@@ -6,7 +6,7 @@ import { AlertTriangle, Check, Clock3, Lock, LoaderCircle, LogOut, MapPin, Shiel
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { distanceMetres, formatDistance, getPosition, loadOffice, loadUnlocks, type GeoFailure, type OfficeLocation } from "@/lib/office-location";
-import { onRequestsChanged, openVisitsForUser, type VisitRequest } from "@/lib/requests-store";
+import { confirmFieldCheckIn, getTodayFieldVisits, onRequestsChanged, openVisitsForUser, type VisitRequest } from "@/lib/requests-store";
 
 const EMPLOYEE_ID = "ahmed-khalil"; // demo user until real sign-in exists
 const EMPLOYEE_NAME = "Ahmed Khalil";
@@ -15,7 +15,16 @@ const shifts = [
   { id: "12", label: "12:00 PM – 8:00 PM", startHour: 12 },
 ];
 
-type Stamp = { at: string; distance: number | null; accuracy?: number | null; waived: boolean };
+type Stamp = {
+  at: string;
+  distance: number | null;
+  accuracy?: number | null;
+  waived: boolean;
+  kind?: "office" | "field";
+  meetingId?: string;
+  meetingZone?: string;
+  projectName?: string;
+};
 type DayRecord = { checkIn?: Stamp; checkOut?: Stamp };
 type Blocked =
   | { kind: "outside"; distance: number; radius: number; accuracy: number }
@@ -42,6 +51,8 @@ export function AttendanceWorkspace() {
   const [blocked, setBlocked] = useState<Blocked | null>(null);
   const [dateLabel, setDateLabel] = useState("");
   const [openVisits, setOpenVisits] = useState<VisitRequest[]>([]);
+  const [fieldVisits, setFieldVisits] = useState<{ checkIn: VisitRequest | null; checkOut: VisitRequest | null }>({ checkIn: null, checkOut: null });
+  const [stampMode, setStampMode] = useState<"in" | "out" | null>(null);
 
   useEffect(() => {
     setOffice(loadOffice());
@@ -49,7 +60,10 @@ export function AttendanceWorkspace() {
     setUnlocked(Boolean(loadUnlocks()[EMPLOYEE_ID]));
     try { setShiftId(window.localStorage.getItem("opshub-demo-shift") ?? "11"); } catch { /* storage unavailable */ }
     setDateLabel(new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric" }).format(new Date()));
-    const refresh = () => setOpenVisits(openVisitsForUser(EMPLOYEE_NAME));
+    const refresh = () => {
+      setOpenVisits(openVisitsForUser(EMPLOYEE_NAME));
+      setFieldVisits(getTodayFieldVisits(EMPLOYEE_NAME));
+    };
     refresh();
     const unsubscribe = onRequestsChanged(refresh);
     setReady(true);
@@ -62,14 +76,20 @@ export function AttendanceWorkspace() {
   const done = Boolean(record.checkOut);
   const inside = Boolean(record.checkIn) && !done;
 
-  async function stamp(kind: "in" | "out") {
+  async function stamp(kind: "in" | "out", fromField: boolean = false) {
     if (kind === "out" && openVisits.length > 0) return; // guard: checkout blocked
     setBlocked(null);
     setBusy(kind);
+    setStampMode(null);
     try {
       let distance: number | null = null;
       let accuracy: number | null = null;
-      if (!unlocked) {
+      const stampKind: "office" | "field" = fromField ? "field" : "office";
+      const meetingId = fromField ? (kind === "in" ? fieldVisits.checkIn?.id : fieldVisits.checkOut?.id) : undefined;
+      const meetingZone = fromField ? (kind === "in" ? fieldVisits.checkIn?.zone : fieldVisits.checkOut?.zone) : undefined;
+      const projectName = fromField ? (kind === "in" ? fieldVisits.checkIn?.projectName : fieldVisits.checkOut?.projectName) : undefined;
+
+      if (!fromField && !unlocked) {
         const fix = await getPosition();
         // A reading that is less precise than the radius cannot prove presence (Wi-Fi or IP locations can be kilometres off).
         const limit = Math.max(radius, 100);
@@ -84,9 +104,26 @@ export function AttendanceWorkspace() {
           return;
         }
       }
-      const next: DayRecord = { ...record, [kind === "in" ? "checkIn" : "checkOut"]: { at: new Date().toISOString(), distance, accuracy, waived: unlocked } };
+      const next: DayRecord = {
+        ...record,
+        [kind === "in" ? "checkIn" : "checkOut"]: {
+          at: new Date().toISOString(),
+          distance,
+          accuracy,
+          waived: unlocked,
+          kind: stampKind,
+          meetingId,
+          meetingZone,
+          projectName,
+        }
+      };
       setRecord(next);
       writeRecord(next);
+
+      // If this is a field stamp, confirm it in the visits store
+      if (fromField && meetingId) {
+        confirmFieldCheckIn(meetingId);
+      }
     } catch (failure) {
       setBlocked({ kind: failure as GeoFailure });
     } finally {
@@ -156,16 +193,48 @@ export function AttendanceWorkspace() {
 
           <div className="mt-8 flex flex-wrap gap-3">
             {!inside && !done && (
-              <Button size="lg" className="min-w-40" onClick={() => stamp("in")} disabled={!hasOffice || busy !== null}>
-                {busy === "in" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                {busy === "in" ? "Checking location…" : "Check in"}
-              </Button>
+              <>
+                {fieldVisits.checkIn && stampMode === "in" ? (
+                  <div className="flex w-full flex-col gap-2">
+                    <Button size="lg" className="w-full" onClick={() => stamp("in", false)} disabled={busy !== null}>
+                      {busy === "in" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                      {busy === "in" ? "Checking…" : "Check in at office"}
+                    </Button>
+                    <Button size="lg" className="w-full bg-[#8FD4C6] text-[#0B4F4B] hover:bg-[#7CCAB8]" onClick={() => stamp("in", true)} disabled={busy !== null}>
+                      {busy === "in" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <MapPin className="h-4 w-4" />}
+                      {busy === "in" ? "Checking…" : `Check in at ${fieldVisits.checkIn.zone}`}
+                    </Button>
+                    <Button variant="outline" size="lg" onClick={() => setStampMode(null)}>Cancel</Button>
+                  </div>
+                ) : (
+                  <Button size="lg" className="min-w-40" onClick={() => fieldVisits.checkIn ? setStampMode("in") : stamp("in")} disabled={!hasOffice || busy !== null}>
+                    {busy === "in" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                    {busy === "in" ? "Checking location…" : "Check in"}
+                  </Button>
+                )}
+              </>
             )}
             {inside && (
-              <Button size="lg" variant="outline" className="min-w-40" onClick={() => stamp("out")} disabled={busy !== null || openVisits.length > 0}>
-                {openVisits.length > 0 ? <Lock className="h-4 w-4" /> : busy === "out" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
-                {openVisits.length > 0 ? "Close meetings first" : busy === "out" ? "Checking location…" : "Check out"}
-              </Button>
+              <>
+                {fieldVisits.checkOut && stampMode === "out" ? (
+                  <div className="flex w-full flex-col gap-2">
+                    <Button size="lg" className="w-full" onClick={() => stamp("out", false)} disabled={busy !== null || openVisits.length > 0}>
+                      {busy === "out" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
+                      {busy === "out" ? "Checking…" : "Check out at office"}
+                    </Button>
+                    <Button size="lg" className="w-full bg-[#8FD4C6] text-[#0B4F4B] hover:bg-[#7CCAB8]" onClick={() => stamp("out", true)} disabled={busy !== null || openVisits.length > 0}>
+                      {busy === "out" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <MapPin className="h-4 w-4" />}
+                      {busy === "out" ? "Checking…" : `Check out at ${fieldVisits.checkOut.zone}`}
+                    </Button>
+                    <Button variant="outline" size="lg" onClick={() => setStampMode(null)}>Cancel</Button>
+                  </div>
+                ) : (
+                  <Button size="lg" variant="outline" className="min-w-40" onClick={() => fieldVisits.checkOut ? setStampMode("out") : stamp("out")} disabled={busy !== null || openVisits.length > 0}>
+                    {openVisits.length > 0 ? <Lock className="h-4 w-4" /> : busy === "out" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
+                    {openVisits.length > 0 ? "Close meetings first" : busy === "out" ? "Checking location…" : "Check out"}
+                  </Button>
+                )}
+              </>
             )}
           </div>
 
@@ -202,8 +271,8 @@ export function AttendanceWorkspace() {
             <h2 className="text-base font-semibold">Today</h2>
             <dl className="mt-4 space-y-3 text-sm">
               <Line label="Shift" value={shift.label} />
-              <Line label="Check-in" value={record.checkIn ? clock(record.checkIn.at) : "—"} note={record.checkIn ? (record.checkIn.waived ? "Waived by admin" : record.checkIn.distance !== null ? `${formatDistance(record.checkIn.distance)} from office${record.checkIn.accuracy ? `, ±${Math.round(record.checkIn.accuracy)} m` : ""}` : undefined) : undefined} />
-              <Line label="Check-out" value={record.checkOut ? clock(record.checkOut.at) : "—"} />
+              <Line label="Check-in" value={record.checkIn ? clock(record.checkIn.at) : "—"} note={record.checkIn ? (record.checkIn.waived ? "Waived by admin" : record.checkIn.kind === "field" ? `At ${record.checkIn.meetingZone}${record.checkIn.projectName ? ` · ${record.checkIn.projectName}` : ""}` : record.checkIn.distance !== null ? `${formatDistance(record.checkIn.distance)} from office${record.checkIn.accuracy ? `, ±${Math.round(record.checkIn.accuracy)} m` : ""}` : undefined) : undefined} />
+              <Line label="Check-out" value={record.checkOut ? clock(record.checkOut.at) : "—"} note={record.checkOut ? (record.checkOut.kind === "field" ? `At ${record.checkOut.meetingZone}${record.checkOut.projectName ? ` · ${record.checkOut.projectName}` : ""}` : undefined) : undefined} />
               <Line label="Worked" value={worked()} />
             </dl>
             {record.checkIn && <button onClick={resetToday} className="mt-4 block text-xs font-semibold text-slate-500 underline-offset-4 hover:text-[#0B4F4B] hover:underline">Reset today&apos;s record (demo only)</button>}
