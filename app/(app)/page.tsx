@@ -1,2 +1,2 @@
-import { Dashboard } from "@/components/page-kit";
-export default function Page() { return <Dashboard />; }
+import { HomeDashboard } from "@/components/home-dashboard";
+export default function Page() { return <HomeDashboard />; }

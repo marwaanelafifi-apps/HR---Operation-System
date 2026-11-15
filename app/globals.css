@@ -4,7 +4,9 @@
 
 :root { color-scheme: light; }
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; background: #f8fafc; color: #0f172a; }
-.dark body { background: #020617; color: #e2e8f0; }
+body { margin: 0; min-width: 320px; background: #f5f8f7; color: #172625; }
+.dark body { background: #07100f; color: #e7f1ef; }
 button, input, select, textarea { font: inherit; }
-::selection { background: #c7d2fe; }
+::selection { background: #bfe0d9; color: #063c39; }
+*:focus-visible { outline: 2px solid #0b4f4b; outline-offset: 3px; }
+html { scrollbar-color: #8ba9a2 #f5f8f7; }

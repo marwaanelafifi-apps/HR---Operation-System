@@ -14,6 +14,19 @@ The present user-facing scope is:
 
 Customer CRM and customer management are intentionally deferred.
 
+## Workspace and access model
+
+The application is organised into two primary workspaces:
+
+- **Workplace:** attendance, office operations, leave, deductions, payslips, and HR workflows.
+- **CRM:** customer, deal, meeting, booking, and field-sales workflows.
+
+Sales users can access their own Workplace/HR information and the CRM in separate top-level tabs. Employees see only personal Workplace data; HR/admin roles manage broader people and payroll data; CRM visibility is role-based.
+
+## Brand commitment
+
+Use `public/Logo.png` as the brand asset. The visual system is formal and modern, informed by the logo's deep evergreen/teal and near-black palette. Avoid the previous purple SaaS visual language.
+
 ## Technology
 
 - Next.js App Router, React, TypeScript, Tailwind CSS, shadcn-style components

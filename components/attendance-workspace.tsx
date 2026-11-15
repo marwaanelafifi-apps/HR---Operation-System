@@ -1,125 +1,250 @@
 "use client";
 
-import { useState } from "react";
-import { Building2, CalendarDays, Check, ChevronDown, Clock3, LoaderCircle, MapPin, Navigation, ShieldCheck, Timer, WifiOff } from "lucide-react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { AlertTriangle, Check, Clock3, Lock, LoaderCircle, LogOut, MapPin, ShieldCheck, Unlock } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { distanceMetres, formatDistance, getPosition, loadOffice, loadUnlocks, type GeoFailure, type OfficeLocation } from "@/lib/office-location";
+import { onRequestsChanged, openVisitsForUser, type VisitRequest } from "@/lib/requests-store";
 
-type CompanyLocation = { name: string; radius: string };
-const defaultLocation: CompanyLocation = { name: "Cairo HQ", radius: "150" };
+const EMPLOYEE_ID = "ahmed-khalil"; // demo user until real sign-in exists
+const EMPLOYEE_NAME = "Ahmed Khalil";
+const shifts = [
+  { id: "11", label: "11:00 AM – 7:00 PM", startHour: 11 },
+  { id: "12", label: "12:00 PM – 8:00 PM", startHour: 12 },
+];
 
-function configuredLocation(): CompanyLocation {
-  if (typeof window === "undefined") return defaultLocation;
-  try {
-    return { ...defaultLocation, ...JSON.parse(window.localStorage.getItem("opshub-demo-company-location") ?? "{}") };
-  } catch {
-    return defaultLocation;
-  }
+type Stamp = { at: string; distance: number | null; accuracy?: number | null; waived: boolean };
+type DayRecord = { checkIn?: Stamp; checkOut?: Stamp };
+type Blocked =
+  | { kind: "outside"; distance: number; radius: number; accuracy: number }
+  | { kind: "imprecise"; accuracy: number; limit: number }
+  | { kind: GeoFailure };
+
+const todayKey = () => `opshub-demo-attendance-${new Date().toISOString().slice(0, 10)}`;
+const clock = (iso: string) => new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit", hour12: true }).format(new Date(iso));
+
+function readRecord(): DayRecord {
+  try { return JSON.parse(window.localStorage.getItem(todayKey()) ?? "{}"); } catch { return {}; }
+}
+function writeRecord(record: DayRecord) {
+  try { window.localStorage.setItem(todayKey(), JSON.stringify(record)); } catch { /* storage unavailable */ }
 }
 
-type AttendanceState = "ready" | "checking" | "checked-in" | "checked-out" | "denied" | "unavailable";
-
 export function AttendanceWorkspace() {
-  const [state, setState] = useState<AttendanceState>("ready");
-  const [location] = useState(configuredLocation);
-  const [checkInTime, setCheckInTime] = useState<string | null>(null);
-  const [checkOutTime, setCheckOutTime] = useState<string | null>(null);
-  const isCheckedIn = state === "checked-in";
-  const isComplete = state === "checked-out";
-  const issue = state === "denied" || state === "unavailable";
+  const [ready, setReady] = useState(false);
+  const [office, setOffice] = useState<OfficeLocation>({ name: "", radius: "150" });
+  const [record, setRecord] = useState<DayRecord>({});
+  const [unlocked, setUnlocked] = useState(false);
+  const [shiftId, setShiftId] = useState("11");
+  const [busy, setBusy] = useState<"in" | "out" | null>(null);
+  const [blocked, setBlocked] = useState<Blocked | null>(null);
+  const [dateLabel, setDateLabel] = useState("");
+  const [openVisits, setOpenVisits] = useState<VisitRequest[]>([]);
 
-  const statusCopy = state === "checking"
-    ? "Verifying your location…"
-    : isCheckedIn
-      ? "You’re checked in"
-      : isComplete
-        ? "Your workday is complete"
-        : state === "denied"
-          ? "Location permission is off"
-          : state === "unavailable"
-            ? "Location is currently unavailable"
-            : "Ready to begin your day";
+  useEffect(() => {
+    setOffice(loadOffice());
+    setRecord(readRecord());
+    setUnlocked(Boolean(loadUnlocks()[EMPLOYEE_ID]));
+    try { setShiftId(window.localStorage.getItem("opshub-demo-shift") ?? "11"); } catch { /* storage unavailable */ }
+    setDateLabel(new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric" }).format(new Date()));
+    const refresh = () => setOpenVisits(openVisitsForUser(EMPLOYEE_NAME));
+    refresh();
+    const unsubscribe = onRequestsChanged(refresh);
+    setReady(true);
+    return unsubscribe;
+  }, []);
+
+  const shift = shifts.find((s) => s.id === shiftId) ?? shifts[0];
+  const hasOffice = office.lat !== undefined && office.lng !== undefined;
+  const radius = Number(office.radius) || 150;
+  const done = Boolean(record.checkOut);
+  const inside = Boolean(record.checkIn) && !done;
+
+  async function stamp(kind: "in" | "out") {
+    if (kind === "out" && openVisits.length > 0) return; // guard: checkout blocked
+    setBlocked(null);
+    setBusy(kind);
+    try {
+      let distance: number | null = null;
+      let accuracy: number | null = null;
+      if (!unlocked) {
+        const fix = await getPosition();
+        // A reading that is less precise than the radius cannot prove presence (Wi-Fi or IP locations can be kilometres off).
+        const limit = Math.max(radius, 100);
+        if (fix.accuracy > limit) {
+          setBlocked({ kind: "imprecise", accuracy: fix.accuracy, limit });
+          return;
+        }
+        distance = distanceMetres(fix, { lat: office.lat!, lng: office.lng! });
+        accuracy = fix.accuracy;
+        if (distance > radius) {
+          setBlocked({ kind: "outside", distance, radius, accuracy: fix.accuracy });
+          return;
+        }
+      }
+      const next: DayRecord = { ...record, [kind === "in" ? "checkIn" : "checkOut"]: { at: new Date().toISOString(), distance, accuracy, waived: unlocked } };
+      setRecord(next);
+      writeRecord(next);
+    } catch (failure) {
+      setBlocked({ kind: failure as GeoFailure });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function resetToday() {
+    try { window.localStorage.removeItem(todayKey()); } catch { /* storage unavailable */ }
+    setRecord({});
+    setBlocked(null);
+  }
+
+  function changeShift(id: string) {
+    setShiftId(id);
+    try { window.localStorage.setItem("opshub-demo-shift", id); } catch { /* storage unavailable */ }
+  }
+
+  function lateNote() {
+    if (!record.checkIn) return null;
+    const at = new Date(record.checkIn.at);
+    const start = new Date(at); start.setHours(shift.startHour, 0, 0, 0);
+    const late = Math.round((at.getTime() - start.getTime()) / 60000);
+    return late > 0 ? `Late by ${late} min` : "On time";
+  }
+
+  function worked() {
+    if (!record.checkIn || !record.checkOut) return "—";
+    const minutes = Math.round((new Date(record.checkOut.at).getTime() - new Date(record.checkIn.at).getTime()) / 60000);
+    return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
+  }
 
   return (
-    <div className="pb-8">
-      <header className="mb-8 flex flex-col gap-5 border-b border-slate-200/80 pb-6 dark:border-slate-800 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-indigo-600 dark:text-indigo-400">
-            <span className="h-2 w-2 rounded-full bg-emerald-500" /> Friday · November 13
-          </div>
-          <h1 className="text-3xl font-semibold tracking-[-0.04em] text-slate-950 dark:text-white sm:text-4xl">Attendance</h1>
-          <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500 dark:text-slate-400">Your personal check-in, check-out, and workday record.</p>
-        </div>
-        <button className="flex w-fit items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
-          <Clock3 className="h-4 w-4 text-slate-400" /> Today <ChevronDown className="h-4 w-4 text-slate-400" />
-        </button>
+    <div className="space-y-6 pb-8">
+      <header>
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#0B4F4B] dark:text-[#8FD4C6]">{dateLabel || " "}</p>
+        <h1 className="mt-1 text-3xl font-semibold tracking-[-0.03em] text-slate-950 dark:text-white">Attendance</h1>
+        <p className="mt-1.5 text-sm text-slate-500">Check in when you arrive at the office. Your location is checked once, only when you tap.</p>
       </header>
 
-      <section className="mb-6 grid gap-3 sm:grid-cols-3">
-        <Metric label="Today’s status" value={isCheckedIn ? "On site" : isComplete ? "Complete" : "Not started"} detail={isCheckedIn ? "Checked in at 09:06 AM" : "Check in when you arrive"} tone={isCheckedIn ? "emerald" : "indigo"} />
-        <Metric label="Scheduled start" value="09:00" detail="Cairo HQ schedule" tone="amber" />
-        <Metric label="Worked today" value={isCheckedIn ? "00:00" : isComplete ? "08:04" : "00:00"} detail={isComplete ? "Shift completed" : "Updates after check-out"} tone="indigo" />
-      </section>
-
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(420px,1.45fr)]">
-        <section className="overflow-hidden rounded-3xl bg-slate-950 p-1 shadow-[0_20px_50px_-22px_rgba(15,23,42,0.55)] dark:bg-slate-800">
-          <div className="relative overflow-hidden rounded-[22px] bg-gradient-to-br from-indigo-600 via-indigo-600 to-violet-700 p-6 text-white sm:p-7">
-            <div className="absolute -right-10 -top-12 h-56 w-56 rounded-full bg-white/10 blur-2xl" />
-            <div className="absolute -bottom-20 left-20 h-40 w-40 rounded-full bg-violet-400/30 blur-3xl" />
-            <div className="relative">
-              <div className="flex items-center justify-between">
-                <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold backdrop-blur">
-                  <span className={`h-1.5 w-1.5 rounded-full ${isCheckedIn ? "bg-emerald-300" : issue ? "bg-amber-300" : "bg-white/80"}`} /> Today
-                </span>
-                <span className="grid h-10 w-10 place-items-center rounded-2xl bg-white/10 backdrop-blur"><Navigation className="h-5 w-5" /></span>
-              </div>
-              <p className="mt-9 text-sm font-medium text-indigo-100">{statusCopy}</p>
-              <h2 className="mt-1 text-3xl font-semibold tracking-[-0.035em]">{isCheckedIn ? checkInTime : isComplete ? checkOutTime : "Check in"}</h2>
-              <p className="mt-2 max-w-sm text-sm leading-6 text-indigo-100/90">{isCheckedIn ? `Verified at ${location.name}` : isComplete ? `Checked out from ${location.name}` : `Confirm you are at ${location.name} to start your day.`}</p>
-              <div className="mt-7 flex flex-wrap gap-2.5">
-                <Button className="bg-white text-indigo-700 shadow-lg shadow-indigo-950/20 hover:bg-indigo-50" disabled={state === "checking" || isCheckedIn || isComplete} onClick={() => { setState("checking"); setTimeout(() => { setCheckInTime(currentTime()); setState("checked-in"); }, 650); }}>
-                  {state === "checking" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                  Check in
-                </Button>
-                {isCheckedIn && <Button variant="outline" className="border-white/25 bg-white/10 text-white hover:bg-white/20 hover:text-white" onClick={() => { setCheckOutTime(currentTime()); setState("checked-out"); }}>Check out</Button>}
-              </div>
+      {ready && !hasOffice && (
+        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 dark:border-amber-900/60 dark:bg-amber-950/30">
+          <div className="flex items-start gap-3">
+            <MapPin className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+            <div className="flex-1">
+              <h2 className="text-base font-semibold text-amber-900 dark:text-amber-100">Office location is not set yet</h2>
+              <p className="mt-1 text-sm leading-6 text-amber-800 dark:text-amber-200">Check-in needs the office location. An admin sets it once in the Admin panel, under Office location.</p>
+              <Button asChild className="mt-4"><Link href="/admin"><MapPin className="h-4 w-4" />Open Admin panel</Link></Button>
             </div>
           </div>
-          <div className="flex items-center justify-between bg-slate-950 px-5 py-3.5 text-xs text-slate-400 dark:bg-slate-800">
-            <span className="inline-flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-emerald-400" /> Your location is only checked when you tap an action.</span>
-            <button className="hidden underline decoration-slate-600 underline-offset-4 hover:text-white sm:block" onClick={() => setState("denied")}>Test a blocked state</button>
+        </section>
+      )}
+
+      <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
+        <section className="rounded-2xl border border-[#DCE9E6] bg-white p-6 dark:border-slate-800 dark:bg-slate-900 sm:p-8">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone={done ? "default" : inside ? "success" : "info"}>{done ? "Day complete" : inside ? "Checked in" : "Not checked in"}</Badge>
+            {unlocked && <Badge tone="warning"><Unlock className="mr-1 h-3 w-3" />Location check waived by admin</Badge>}
           </div>
+
+          <h2 className="mt-5 text-4xl font-semibold tracking-[-0.03em] text-slate-950 dark:text-white">
+            {done ? "See you tomorrow" : inside ? `In since ${clock(record.checkIn!.at)}` : "Ready to start?"}
+          </h2>
+          <p className="mt-2 text-sm text-slate-500">
+            {done ? `Worked ${worked()} today.` : inside ? lateNote() : hasOffice ? `Your shift starts at ${shift.label.split(" – ")[0]}.` : "Waiting for the office location."}
+          </p>
+
+          <div className="mt-8 flex flex-wrap gap-3">
+            {!inside && !done && (
+              <Button size="lg" className="min-w-40" onClick={() => stamp("in")} disabled={!hasOffice || busy !== null}>
+                {busy === "in" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                {busy === "in" ? "Checking location…" : "Check in"}
+              </Button>
+            )}
+            {inside && (
+              <Button size="lg" variant="outline" className="min-w-40" onClick={() => stamp("out")} disabled={busy !== null || openVisits.length > 0}>
+                {openVisits.length > 0 ? <Lock className="h-4 w-4" /> : busy === "out" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
+                {openVisits.length > 0 ? "Close meetings first" : busy === "out" ? "Checking location…" : "Check out"}
+              </Button>
+            )}
+          </div>
+
+          {inside && openVisits.length > 0 && (
+            <div className="mt-6 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/60 dark:bg-amber-950/30">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-amber-900 dark:text-amber-100">
+                  {openVisits.length} meeting{openVisits.length === 1 ? "" : "s"} still need outcome notes
+                </p>
+                <ul className="mt-2 space-y-1 text-xs text-amber-800 dark:text-amber-200">
+                  {openVisits.map(v => (
+                    <li key={v.id} className="flex items-center gap-2">
+                      <span className="h-1 w-1 rounded-full bg-amber-600" />
+                      <strong className="font-semibold">{v.projectName}</strong>
+                      <span>· {v.clientName} · {v.date}</span>
+                    </li>
+                  ))}
+                </ul>
+                <Link href="/meetings" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-amber-900 underline-offset-4 hover:underline dark:text-amber-200">
+                  Go close them in Meetings →
+                </Link>
+              </div>
+            </div>
+          )}
+
+          {blocked && <BlockedMessage blocked={blocked} />}
+
+          <p className="mt-8 flex items-center gap-2 text-xs text-slate-400"><ShieldCheck className="h-4 w-4" />Only you and authorised managers see your record. Saved in this browser only (demo).</p>
         </section>
 
-        <section className="rounded-3xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <div className="px-6 pb-4 pt-6"><h2 className="text-base font-semibold text-slate-950 dark:text-white">My workday</h2><p className="mt-1 text-sm text-slate-500">Only you and authorised managers can access your records.</p></div>
-          <div className="space-y-2 px-3 pb-5">
-            <PersonalRow icon={CalendarDays} label="Scheduled shift" value="09:00 AM – 05:00 PM" detail="Friday · Cairo HQ" />
-            <PersonalRow icon={Timer} label="Check-in" value={checkInTime ?? "Not checked in"} detail={checkInTime ? `Verified at ${location.name}` : "Available when you arrive"} active={isCheckedIn || isComplete} />
-            <PersonalRow icon={Clock3} label="Check-out" value={checkOutTime ?? "Not checked out"} detail={checkOutTime ? `Recorded from ${location.name}` : "Available after check-in"} active={isComplete} />
-          </div>
-        </section>
+        <aside className="space-y-4">
+          <section className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+            <h2 className="text-base font-semibold">Today</h2>
+            <dl className="mt-4 space-y-3 text-sm">
+              <Line label="Shift" value={shift.label} />
+              <Line label="Check-in" value={record.checkIn ? clock(record.checkIn.at) : "—"} note={record.checkIn ? (record.checkIn.waived ? "Waived by admin" : record.checkIn.distance !== null ? `${formatDistance(record.checkIn.distance)} from office${record.checkIn.accuracy ? `, ±${Math.round(record.checkIn.accuracy)} m` : ""}` : undefined) : undefined} />
+              <Line label="Check-out" value={record.checkOut ? clock(record.checkOut.at) : "—"} />
+              <Line label="Worked" value={worked()} />
+            </dl>
+            {record.checkIn && <button onClick={resetToday} className="mt-4 block text-xs font-semibold text-slate-500 underline-offset-4 hover:text-[#0B4F4B] hover:underline">Reset today&apos;s record (demo only)</button>}
+            <Link href="/requests/excuse" className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-[#0B4F4B] hover:underline dark:text-[#8FD4C6]"><Clock3 className="h-4 w-4" />Running late? Request an excuse</Link>
+          </section>
+
+          <section className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+            <h2 className="text-base font-semibold">Office</h2>
+            <p className="mt-2 text-sm text-slate-700 dark:text-slate-200">{office.name || "—"}</p>
+            <p className="mt-0.5 text-xs text-slate-500">{hasOffice ? `Check in within ${radius} m` : "Location not set"}</p>
+            <label className="mt-4 block text-xs font-medium text-slate-500" htmlFor="shift">Assigned shift (set by admin)</label>
+            <select id="shift" value={shiftId} onChange={(e) => changeShift(e.target.value)} className="mt-1 w-full rounded-lg border border-[#DCE9E6] bg-transparent px-3 py-2 text-sm dark:border-slate-700">
+              {shifts.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+            </select>
+          </section>
+        </aside>
       </div>
-
-      <section className="mt-6 grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-2xl bg-indigo-50 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-300"><Building2 className="h-5 w-5" /></span><div><h2 className="text-sm font-semibold">Your check-in site</h2><p className="text-xs text-slate-500">Set by an admin in Users & settings</p></div></div>
-          <div className="mt-5 flex items-center justify-between rounded-2xl bg-slate-50 p-4 dark:bg-slate-800/70"><div><p className="font-semibold text-slate-900 dark:text-white">{location.name}</p><p className="mt-1 text-xs text-slate-500">Allowed radius: {location.radius} metres</p></div><span className="grid h-10 w-10 place-items-center rounded-full border-4 border-indigo-100 bg-white text-indigo-600 dark:border-indigo-950 dark:bg-slate-900"><MapPin className="h-4 w-4" /></span></div>
-        </div>
-        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900"><div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-2xl bg-amber-50 text-amber-600 dark:bg-amber-950 dark:text-amber-300"><WifiOff className="h-5 w-5" /></span><div><h2 className="text-sm font-semibold">Need help checking in?</h2><p className="text-xs text-slate-500">Use a clear exception state—never guess attendance.</p></div></div><div className="mt-5 flex gap-2"><Button variant="outline" size="sm" onClick={() => setState("denied")}>Permission denied</Button><Button variant="outline" size="sm" onClick={() => setState("unavailable")}>Location unavailable</Button></div></div>
-      </section>
     </div>
   );
 }
 
-function Metric({ label, value, detail, tone }: { label: string; value: string; detail: string; tone: "emerald" | "amber" | "indigo" }) {
-  const color = { emerald: "bg-emerald-500", amber: "bg-amber-500", indigo: "bg-indigo-500" }[tone];
-  return <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><div className="flex items-center gap-2 text-xs font-medium text-slate-500"><span className={`h-2 w-2 rounded-full ${color}`} />{label}</div><div className="mt-2 flex items-end justify-between"><p className="text-2xl font-semibold tracking-[-0.03em] text-slate-950 dark:text-white">{value}</p><p className="text-xs text-slate-400">{detail}</p></div></div>;
+function Line({ label, value, note }: { label: string; value: string; note?: string }) {
+  return <div className="flex items-baseline justify-between gap-3"><dt className="text-slate-500">{label}</dt><dd className="text-right font-semibold text-slate-900 dark:text-white">{value}{note && <span className="block text-xs font-normal text-slate-400">{note}</span>}</dd></div>;
 }
 
-function currentTime() {
-  return new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit", hour12: true }).format(new Date());
-}
-
-function PersonalRow({ icon: Icon, label, value, detail, active = false }: { icon: typeof CalendarDays; label: string; value: string; detail: string; active?: boolean }) {
-  return <div className="flex items-center gap-3 rounded-2xl px-3 py-3.5 transition hover:bg-slate-50 dark:hover:bg-slate-800/70"><span className={`grid h-10 w-10 place-items-center rounded-2xl ${active ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-300" : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400"}`}><Icon className="h-4 w-4" /></span><div className="min-w-0 flex-1"><p className="text-xs font-medium text-slate-500">{label}</p><p className="mt-0.5 text-sm font-semibold text-slate-800 dark:text-slate-100">{value}</p></div><span className="hidden text-right text-xs text-slate-400 sm:block">{detail}</span></div>;
+function BlockedMessage({ blocked }: { blocked: Blocked }) {
+  const copy = blocked.kind === "outside"
+    ? { title: "You are too far from the office", body: `You are about ${formatDistance(blocked.distance)} away. Check-in works within ${blocked.radius} m. If you have an excuse, ask the CEO or GM to unlock your attendance.` }
+    : blocked.kind === "imprecise"
+      ? { title: "Your location is not precise enough", body: `Your device located you only to within about ${formatDistance(blocked.accuracy)}, and check-in needs ${blocked.limit} m or better. Computers often locate by Wi-Fi or internet address and can be kilometres off. Try again on your phone with precise location turned on.` }
+    : blocked.kind === "denied"
+      ? { title: "Location is turned off", body: "Allow location for this site in your browser settings, then try again. Check-in needs your location." }
+      : blocked.kind === "timeout"
+        ? { title: "Location took too long", body: "Move near a window or turn on Wi-Fi, then try again." }
+        : blocked.kind === "unsupported"
+          ? { title: "This browser has no location support", body: "Open the app in Chrome, Safari or Edge." }
+          : { title: "Location is unavailable", body: "Your device could not find its position. Try again in a moment." };
+  return (
+    <div role="alert" className="mt-6 flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 p-4 dark:border-rose-900/60 dark:bg-rose-950/30">
+      <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-rose-600" />
+      <div><p className="text-sm font-semibold text-rose-900 dark:text-rose-100">{copy.title}</p><p className="mt-1 text-sm leading-6 text-rose-800 dark:text-rose-200">{copy.body}</p></div>
+    </div>
+  );
 }
