@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
-import { Bell, Building2, CalendarDays, CheckSquare, ClipboardCheck, Clock3, LayoutDashboard, Menu, Moon, Shield, Sun, UserRound, X } from "lucide-react";
+import { Bell, Building2, CalendarDays, CheckSquare, ClipboardCheck, Clock3, LayoutDashboard, Menu, Moon, Receipt, Shield, Sun, UserRound, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui/avatar";
 
@@ -29,6 +29,7 @@ const groups = [
     items: [
       { href: "/approvals", label: "Approvals", icon: CheckSquare },
       { href: "/employees", label: "People", icon: UserRound },
+      { href: "/finance", label: "Finance", icon: Receipt },
       { href: "/admin", label: "Admin panel", icon: Shield },
     ],
   },
