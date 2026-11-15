@@ -30,6 +30,8 @@ export type VisitRequest = {
   closed?: boolean;
   closedAt?: string;
   outcomeNotes?: string;
+  transportationCost?: number;
+  receipts?: string[]; // array of base64-encoded file data
 };
 
 export type ExcuseRequest = {
@@ -102,10 +104,10 @@ export function decide(
     : { ...store, excuses: store.excuses.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
 }
 
-/** Close an approved site visit with mandatory outcome notes. */
-export function closeVisit(id: string, outcomeNotes: string) {
+/** Close an approved site visit with mandatory outcome notes, transportation cost, and receipts. */
+export function closeVisit(id: string, outcomeNotes: string, transportationCost: number, receipts: string[]) {
   const store = loadRequests();
-  save({ ...store, visits: store.visits.map((r) => (r.id === id ? { ...r, closed: true, closedAt: nowLabel(), outcomeNotes: outcomeNotes.trim() } : r)) });
+  save({ ...store, visits: store.visits.map((r) => (r.id === id ? { ...r, closed: true, closedAt: nowLabel(), outcomeNotes: outcomeNotes.trim(), transportationCost, receipts } : r)) });
 }
 
 /** Approved site visits for this user that are today-or-earlier and not yet closed. */

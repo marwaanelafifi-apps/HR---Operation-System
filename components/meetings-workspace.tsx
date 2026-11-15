@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CalendarDays, Check, CheckCircle2, Clock3, Hash, Lock, MapPin, Phone, Plus, StickyNote, User, X } from "lucide-react";
+import { AlertTriangle, CalendarDays, Check, CheckCircle2, Clock3, Hash, Lock, MapPin, Phone, Plus, Receipt, StickyNote, Trash2, User, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { closeVisit, loadRequests, onRequestsChanged, type VisitRequest } from "@/lib/requests-store";
@@ -237,6 +237,8 @@ function EmptyState({ tab, onNew }: { tab: Tab; onNew: () => void }) {
 function DetailsDialog({ visit, onClose }: { visit: VisitRequest; onClose: () => void }) {
   const [closing, setClosing] = useState(false);
   const [outcome, setOutcome] = useState("");
+  const [cost, setCost] = useState("");
+  const [receipts, setReceipts] = useState<File[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
@@ -246,11 +248,28 @@ function DetailsDialog({ visit, onClose }: { visit: VisitRequest; onClose: () =>
     return () => { document.removeEventListener("keydown", esc); document.body.style.overflow = ""; };
   }, [onClose]);
 
-  const submitClose = () => {
-    if (outcome.trim().length < 10) { setErr("Please add at least 10 characters so the outcome is actually documented."); return; }
-    closeVisit(visit.id, outcome);
+  const submitClose = async () => {
+    if (outcome.trim().length < 10) { setErr("Outcome notes must be at least 10 characters."); return; }
+    const costNum = parseFloat(cost);
+    if (!cost.trim() || isNaN(costNum) || costNum <= 0) { setErr("Transportation cost must be a valid positive number (EGP)."); return; }
+    if (receipts.length === 0) { setErr("At least one receipt file is required."); return; }
+
+    // Convert files to base64
+    const receiptData: string[] = [];
+    for (const file of receipts) {
+      const base64 = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.readAsDataURL(file);
+      });
+      receiptData.push(base64);
+    }
+
+    closeVisit(visit.id, outcome, costNum, receiptData);
     setClosing(false);
     setOutcome("");
+    setCost("");
+    setReceipts([]);
     setErr(null);
   };
 
@@ -328,21 +347,92 @@ function DetailsDialog({ visit, onClose }: { visit: VisitRequest; onClose: () =>
             </DetailGroup>
           )}
 
+          {visit.transportationCost !== undefined && (
+            <DetailGroup title="Expenses">
+              <DetailRow icon={<Receipt className="h-4 w-4" />} label="Transportation" value={`EGP ${visit.transportationCost.toFixed(2)}`} />
+              {visit.receipts && visit.receipts.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  <p className="text-xs font-medium text-slate-500">Receipts ({visit.receipts.length} file{visit.receipts.length === 1 ? "" : "s"})</p>
+                  <ul className="space-y-1">
+                    {visit.receipts.map((receipt, idx) => (
+                      <li key={idx} className="text-xs">
+                        <a href={receipt} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[#0B4F4B] hover:underline dark:text-[#8FD4C6]">
+                          <Receipt className="h-3 w-3" />Receipt {idx + 1}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </DetailGroup>
+          )}
+
           {/* Close-meeting form */}
           {closing && (
-            <div className="rounded-2xl border border-[#DCE9E6] bg-white p-4 dark:border-slate-700 dark:bg-slate-800/50">
+            <div className="space-y-4 rounded-2xl border border-[#DCE9E6] bg-white p-4 dark:border-slate-700 dark:bg-slate-800/50">
               <label className="block">
                 <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Outcome notes <span className="text-rose-500">*</span></span>
                 <p className="mt-0.5 text-xs text-slate-500">Describe what happened: client interest, next steps, blockers, follow-up date.</p>
                 <textarea
-                  rows={5}
+                  rows={4}
                   value={outcome}
                   onChange={e => { setOutcome(e.target.value); if (err) setErr(null); }}
                   placeholder="e.g. Client viewed Units 4A and 5B. Interested in 5B at EGP 8.5M. Follow-up scheduled for next Tuesday with paperwork."
                   className={`mt-2 w-full resize-none rounded-xl border bg-transparent px-3.5 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:ring-1 dark:text-white ${err ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200" : "border-[#DCE9E6] focus:border-[#0B4F4B] focus:ring-[#0B4F4B]/20 dark:border-slate-700"}`}
                 />
-                {err && <p className="mt-1.5 text-xs font-medium text-rose-600">{err}</p>}
               </label>
+
+              <label className="block">
+                <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Transportation cost (EGP) <span className="text-rose-500">*</span></span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={cost}
+                  onChange={e => { setCost(e.target.value); if (err) setErr(null); }}
+                  placeholder="e.g. 500"
+                  className={`mt-2 w-full rounded-xl border bg-transparent px-3.5 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:ring-1 dark:text-white ${err ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200" : "border-[#DCE9E6] focus:border-[#0B4F4B] focus:ring-[#0B4F4B]/20 dark:border-slate-700"}`}
+                />
+              </label>
+
+              <label className="block">
+                <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Receipt attachments <span className="text-rose-500">*</span></span>
+                <p className="mt-0.5 text-xs text-slate-500">Upload at least one receipt (fuel, tolls, parking, etc.)</p>
+                <div className="mt-2 rounded-xl border-2 border-dashed border-[#DCE9E6] bg-[#F5F8F7] p-4 text-center transition hover:border-[#0B4F4B] dark:border-slate-700 dark:bg-slate-800">
+                  <input
+                    type="file"
+                    multiple
+                    onChange={e => {
+                      const files = Array.from(e.target.files || []);
+                      setReceipts(prev => [...prev, ...files]);
+                      if (err) setErr(null);
+                      e.target.value = "";
+                    }}
+                    className="hidden"
+                    id="receipt-input"
+                    accept="image/*,.pdf"
+                  />
+                  <label htmlFor="receipt-input" className="block cursor-pointer">
+                    <Receipt className="mx-auto h-5 w-5 text-slate-400" />
+                    <p className="mt-2 text-xs font-medium text-slate-600 dark:text-slate-300">Click to upload or drag files</p>
+                    <p className="text-xs text-slate-500">PNG, JPG, PDF</p>
+                  </label>
+                </div>
+                {receipts.length > 0 && (
+                  <ul className="mt-2 space-y-1">
+                    {receipts.map((file, idx) => (
+                      <li key={idx} className="flex items-center justify-between rounded-lg bg-[#E8F3F1] px-3 py-2 text-xs dark:bg-slate-800">
+                        <span className="text-slate-700 dark:text-slate-200">{file.name}</span>
+                        <button type="button" onClick={() => setReceipts(prev => prev.filter((_, i) => i !== idx))} className="text-slate-400 hover:text-rose-500">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </label>
+
+              {err && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-600 dark:bg-rose-950/30 dark:text-rose-400">{err}</p>}
             </div>
           )}
         </div>
