@@ -349,6 +349,8 @@ function MonthView({ monthRecords, shift }: { monthRecords: Record<number, DayRe
   }
 
   const daysInMonth = Object.keys(monthRecords).length;
+  const workdays = [1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19, 22, 23, 24, 25, 26, 29, 30];
+
   const stats = Object.entries(monthRecords).reduce((acc, [dayStr, record]) => {
     const dayNum = parseInt(dayStr, 10);
     const isWorkday = workdays.includes(dayNum);
@@ -375,7 +377,6 @@ function MonthView({ monthRecords, shift }: { monthRecords: Record<number, DayRe
     return acc;
   }, { daysPresent: 0, lateDays: 0, totalLateMinutes: 0, totalMinutes: 0 });
 
-  const workdays = [1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19, 22, 23, 24, 25, 26, 29, 30];
   const absenceDays = workdays.filter(d => d <= daysInMonth && !monthRecords[d]?.checkIn);
 
   return (
