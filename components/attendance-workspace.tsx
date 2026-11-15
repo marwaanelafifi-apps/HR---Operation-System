@@ -34,15 +34,29 @@ type Blocked =
 const todayKey = () => `opshub-demo-attendance-${new Date().toISOString().slice(0, 10)}`;
 const clock = (iso: string) => new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit", hour12: true }).format(new Date(iso));
 
-function readRecord(): DayRecord {
-  try { return JSON.parse(window.localStorage.getItem(todayKey()) ?? "{}"); } catch { return {}; }
+function readRecord(dateStr?: string): DayRecord {
+  const key = dateStr ? `opshub-demo-attendance-${dateStr}` : todayKey();
+  try { return JSON.parse(window.localStorage.getItem(key) ?? "{}"); } catch { return {}; }
 }
 function writeRecord(record: DayRecord) {
   try { window.localStorage.setItem(todayKey(), JSON.stringify(record)); } catch { /* storage unavailable */ }
 }
 
+function getMonthRecords(year: number, month: number): Record<number, DayRecord> {
+  const result: Record<number, DayRecord> = {};
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    result[day] = readRecord(dateStr);
+  }
+  return result;
+}
+
+type Tab = "today" | "month";
+
 export function AttendanceWorkspace() {
   const [ready, setReady] = useState(false);
+  const [tab, setTab] = useState<Tab>("today");
   const [office, setOffice] = useState<OfficeLocation>({ name: "", radius: "150" });
   const [record, setRecord] = useState<DayRecord>({});
   const [unlocked, setUnlocked] = useState(false);
@@ -53,6 +67,7 @@ export function AttendanceWorkspace() {
   const [openVisits, setOpenVisits] = useState<VisitRequest[]>([]);
   const [fieldVisits, setFieldVisits] = useState<{ checkIn: VisitRequest | null; checkOut: VisitRequest | null }>({ checkIn: null, checkOut: null });
   const [stampMode, setStampMode] = useState<"in" | "out" | null>(null);
+  const [monthRecords, setMonthRecords] = useState<Record<number, DayRecord>>({});
 
   useEffect(() => {
     setOffice(loadOffice());
@@ -60,9 +75,12 @@ export function AttendanceWorkspace() {
     setUnlocked(Boolean(loadUnlocks()[EMPLOYEE_ID]));
     try { setShiftId(window.localStorage.getItem("opshub-demo-shift") ?? "11"); } catch { /* storage unavailable */ }
     setDateLabel(new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric" }).format(new Date()));
+    const today = new Date();
+    setMonthRecords(getMonthRecords(today.getFullYear(), today.getMonth()));
     const refresh = () => {
       setOpenVisits(openVisitsForUser(EMPLOYEE_NAME));
       setFieldVisits(getTodayFieldVisits(EMPLOYEE_NAME));
+      setMonthRecords(getMonthRecords(today.getFullYear(), today.getMonth()));
     };
     refresh();
     const unsubscribe = onRequestsChanged(refresh);
@@ -158,26 +176,43 @@ export function AttendanceWorkspace() {
 
   return (
     <div className="space-y-6 pb-8">
-      <header>
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#0B4F4B] dark:text-[#8FD4C6]">{dateLabel || " "}</p>
-        <h1 className="mt-1 text-3xl font-semibold tracking-[-0.03em] text-slate-950 dark:text-white">Attendance</h1>
-        <p className="mt-1.5 text-sm text-slate-500">Check in when you arrive at the office. Your location is checked once, only when you tap.</p>
+      <header className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-end">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#0B4F4B] dark:text-[#8FD4C6]">{tab === "today" ? dateLabel || " " : "This month"}</p>
+          <h1 className="mt-1 text-3xl font-semibold tracking-[-0.03em] text-slate-950 dark:text-white">Attendance</h1>
+          <p className="mt-1.5 text-sm text-slate-500">{tab === "today" ? "Check in when you arrive at the office. Your location is checked once, only when you tap." : "Your attendance record for this month."}</p>
+        </div>
+        <div role="tablist" aria-label="View attendance" className="flex gap-1 rounded-2xl border border-[#DCE9E6] bg-white p-1 dark:border-slate-800 dark:bg-slate-900">
+          {(["today", "month"] as const).map((t) => (
+            <button
+              key={t}
+              role="tab"
+              aria-selected={tab === t}
+              onClick={() => setTab(t)}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${tab === t ? "bg-[#0B4F4B] text-white" : "text-slate-500 hover:text-[#0B4F4B] dark:text-slate-400"}`}
+            >
+              {t === "today" ? "Today" : "This month"}
+            </button>
+          ))}
+        </div>
       </header>
 
-      {ready && !hasOffice && (
-        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 dark:border-amber-900/60 dark:bg-amber-950/30">
-          <div className="flex items-start gap-3">
-            <MapPin className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
-            <div className="flex-1">
-              <h2 className="text-base font-semibold text-amber-900 dark:text-amber-100">Office location is not set yet</h2>
-              <p className="mt-1 text-sm leading-6 text-amber-800 dark:text-amber-200">Check-in needs the office location. An admin sets it once in the Admin panel, under Office location.</p>
-              <Button asChild className="mt-4"><Link href="/admin"><MapPin className="h-4 w-4" />Open Admin panel</Link></Button>
-            </div>
-          </div>
-        </section>
-      )}
+      {tab === "today" && (
+        <>
+          {ready && !hasOffice && (
+            <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 dark:border-amber-900/60 dark:bg-amber-950/30">
+              <div className="flex items-start gap-3">
+                <MapPin className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+                <div className="flex-1">
+                  <h2 className="text-base font-semibold text-amber-900 dark:text-amber-100">Office location is not set yet</h2>
+                  <p className="mt-1 text-sm leading-6 text-amber-800 dark:text-amber-200">Check-in needs the office location. An admin sets it once in the Admin panel, under Office location.</p>
+                  <Button asChild className="mt-4"><Link href="/admin"><MapPin className="h-4 w-4" />Open Admin panel</Link></Button>
+                </div>
+              </div>
+            </section>
+          )}
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
+          <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
         <section className="rounded-2xl border border-[#DCE9E6] bg-white p-6 dark:border-slate-800 dark:bg-slate-900 sm:p-8">
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone={done ? "default" : inside ? "success" : "info"}>{done ? "Day complete" : inside ? "Checked in" : "Not checked in"}</Badge>
@@ -289,6 +324,126 @@ export function AttendanceWorkspace() {
             </select>
           </section>
         </aside>
+      </div>
+        </>
+      )}
+
+      {tab === "month" && ready && (
+        <MonthView monthRecords={monthRecords} />
+      )}
+    </div>
+  );
+}
+
+function MonthView({ monthRecords }: { monthRecords: Record<number, DayRecord> }) {
+  const today = new Date();
+  const isCurrentMonth = true; // Only current month allowed per security rule
+
+  if (!isCurrentMonth) {
+    return (
+      <div className="rounded-2xl border border-rose-200 bg-rose-50 p-10 text-center dark:border-rose-900/60 dark:bg-rose-950/30">
+        <p className="text-sm font-semibold text-rose-900 dark:text-rose-100">Unauthorized access</p>
+        <p className="mt-1 text-sm text-rose-800 dark:text-rose-200">You can only view attendance for the current month.</p>
+      </div>
+    );
+  }
+
+  const daysInMonth = Object.keys(monthRecords).length;
+  const stats = Object.values(monthRecords).reduce((acc, record) => {
+    if (record.checkIn) acc.daysPresent++;
+    if (record.checkIn && record.checkOut) {
+      const minutes = Math.round((new Date(record.checkOut.at).getTime() - new Date(record.checkIn.at).getTime()) / 60000);
+      acc.totalMinutes += minutes;
+    }
+    return acc;
+  }, { daysPresent: 0, totalMinutes: 0 });
+
+  const workdays = [1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19, 22, 23, 24, 25, 26, 29, 30];
+  const absenceDays = workdays.filter(d => d <= daysInMonth && !monthRecords[d]?.checkIn);
+
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-3 sm:grid-cols-4">
+        <div className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Days present</p>
+          <p className="mt-2 text-2xl font-semibold text-slate-950 dark:text-white">{stats.daysPresent}</p>
+          <p className="text-xs text-slate-400">of {daysInMonth} days</p>
+        </div>
+        <div className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Days absent</p>
+          <p className="mt-2 text-2xl font-semibold text-rose-600">{absenceDays.length}</p>
+          <p className="text-xs text-slate-400">without record</p>
+        </div>
+        <div className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total hours</p>
+          <p className="mt-2 text-2xl font-semibold text-slate-950 dark:text-white">{Math.floor(stats.totalMinutes / 60)}</p>
+          <p className="text-xs text-slate-400">hours worked</p>
+        </div>
+        <div className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Average</p>
+          <p className="mt-2 text-2xl font-semibold text-slate-950 dark:text-white">{stats.daysPresent > 0 ? (stats.totalMinutes / stats.daysPresent / 60).toFixed(1) : "0"}</p>
+          <p className="text-xs text-slate-400">hours per day</p>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-[#DCE9E6] bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+        <h2 className="text-lg font-semibold text-slate-950 dark:text-white mb-4">Calendar</h2>
+        <div className="grid grid-cols-7 gap-2">
+          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
+            <div key={day} className="text-center text-xs font-semibold text-slate-500 py-2">{day}</div>
+          ))}
+          {Array.from({ length: daysInMonth }, (_, i) => {
+            const dayNum = i + 1;
+            const record = monthRecords[dayNum];
+            const isToday = dayNum === today.getDate();
+            const isWorkday = workdays.includes(dayNum);
+            let bgColor = "bg-white dark:bg-slate-800";
+            let borderColor = "border-[#DCE9E6] dark:border-slate-700";
+            let textColor = "text-slate-900 dark:text-slate-100";
+
+            if (!isWorkday) {
+              bgColor = "bg-slate-100 dark:bg-slate-700";
+              textColor = "text-slate-400";
+            } else if (record?.checkIn && record?.checkOut) {
+              bgColor = "bg-emerald-50 dark:bg-emerald-950/30";
+              textColor = "text-emerald-900 dark:text-emerald-100";
+            } else if (record?.checkIn) {
+              bgColor = "bg-blue-50 dark:bg-blue-950/30";
+              textColor = "text-blue-900 dark:text-blue-100";
+            } else if (isWorkday) {
+              bgColor = "bg-rose-50 dark:bg-rose-950/30";
+              textColor = "text-rose-900 dark:text-rose-100";
+            }
+
+            if (isToday) {
+              borderColor = "border-[#0B4F4B] dark:border-[#8FD4C6]";
+            }
+
+            return (
+              <div
+                key={dayNum}
+                className={`rounded-lg border ${borderColor} ${bgColor} p-3 text-center min-h-[100px] flex flex-col justify-between`}
+              >
+                <p className={`text-sm font-semibold ${textColor} ${isToday ? "ring-2 ring-[#0B4F4B] rounded-full w-6 h-6 flex items-center justify-center mx-auto" : ""}`}>
+                  {dayNum}
+                </p>
+                {record?.checkIn && (
+                  <div className="text-xs">
+                    <p className={textColor}>
+                      {clock(record.checkIn.at)}
+                      {record.checkOut && ` → ${clock(record.checkOut.at)}`}
+                    </p>
+                    {record.checkOut && (
+                      <p className="text-xs text-slate-500">
+                        {Math.floor((new Date(record.checkOut.at).getTime() - new Date(record.checkIn.at).getTime()) / 3600000)}h
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
