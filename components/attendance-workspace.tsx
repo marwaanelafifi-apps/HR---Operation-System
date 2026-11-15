@@ -329,13 +329,13 @@ export function AttendanceWorkspace() {
       )}
 
       {tab === "month" && ready && (
-        <MonthView monthRecords={monthRecords} />
+        <MonthView monthRecords={monthRecords} shift={shift} />
       )}
     </div>
   );
 }
 
-function MonthView({ monthRecords }: { monthRecords: Record<number, DayRecord> }) {
+function MonthView({ monthRecords, shift }: { monthRecords: Record<number, DayRecord>; shift: typeof shifts[0] }) {
   const today = new Date();
   const isCurrentMonth = true; // Only current month allowed per security rule
 
@@ -349,25 +349,47 @@ function MonthView({ monthRecords }: { monthRecords: Record<number, DayRecord> }
   }
 
   const daysInMonth = Object.keys(monthRecords).length;
-  const stats = Object.values(monthRecords).reduce((acc, record) => {
-    if (record.checkIn) acc.daysPresent++;
+  const stats = Object.entries(monthRecords).reduce((acc, [dayStr, record]) => {
+    const dayNum = parseInt(dayStr, 10);
+    const isWorkday = workdays.includes(dayNum);
+
+    if (record.checkIn) {
+      acc.daysPresent++;
+
+      // Check for delay
+      if (isWorkday) {
+        const checkInTime = new Date(record.checkIn.at);
+        const shiftStart = new Date(checkInTime);
+        shiftStart.setHours(shift.startHour, 0, 0, 0);
+        const delayMinutes = Math.round((checkInTime.getTime() - shiftStart.getTime()) / 60000);
+        if (delayMinutes > 0) {
+          acc.lateDays++;
+          acc.totalLateMinutes += delayMinutes;
+        }
+      }
+    }
     if (record.checkIn && record.checkOut) {
       const minutes = Math.round((new Date(record.checkOut.at).getTime() - new Date(record.checkIn.at).getTime()) / 60000);
       acc.totalMinutes += minutes;
     }
     return acc;
-  }, { daysPresent: 0, totalMinutes: 0 });
+  }, { daysPresent: 0, lateDays: 0, totalLateMinutes: 0, totalMinutes: 0 });
 
   const workdays = [1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19, 22, 23, 24, 25, 26, 29, 30];
   const absenceDays = workdays.filter(d => d <= daysInMonth && !monthRecords[d]?.checkIn);
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-3 sm:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-5">
         <div className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Days present</p>
-          <p className="mt-2 text-2xl font-semibold text-slate-950 dark:text-white">{stats.daysPresent}</p>
+          <p className="mt-2 text-2xl font-semibold text-emerald-600">{stats.daysPresent}</p>
           <p className="text-xs text-slate-400">of {daysInMonth} days</p>
+        </div>
+        <div className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Days late</p>
+          <p className="mt-2 text-2xl font-semibold text-amber-600">{stats.lateDays}</p>
+          <p className="text-xs text-slate-400">{stats.totalLateMinutes > 0 ? `${Math.floor(stats.totalLateMinutes / stats.lateDays)}` : "0"} min avg</p>
         </div>
         <div className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Days absent</p>
@@ -397,6 +419,16 @@ function MonthView({ monthRecords }: { monthRecords: Record<number, DayRecord> }
             const record = monthRecords[dayNum];
             const isToday = dayNum === today.getDate();
             const isWorkday = workdays.includes(dayNum);
+
+            // Calculate delay if checked in late
+            let delayMinutes = 0;
+            if (record?.checkIn && isWorkday) {
+              const checkInTime = new Date(record.checkIn.at);
+              const shiftStart = new Date(checkInTime);
+              shiftStart.setHours(shift.startHour, 0, 0, 0);
+              delayMinutes = Math.round((checkInTime.getTime() - shiftStart.getTime()) / 60000);
+            }
+
             let bgColor = "bg-white dark:bg-slate-800";
             let borderColor = "border-[#DCE9E6] dark:border-slate-700";
             let textColor = "text-slate-900 dark:text-slate-100";
@@ -404,6 +436,9 @@ function MonthView({ monthRecords }: { monthRecords: Record<number, DayRecord> }
             if (!isWorkday) {
               bgColor = "bg-slate-100 dark:bg-slate-700";
               textColor = "text-slate-400";
+            } else if (delayMinutes > 0) {
+              bgColor = "bg-amber-50 dark:bg-amber-950/30";
+              textColor = "text-amber-900 dark:text-amber-100";
             } else if (record?.checkIn && record?.checkOut) {
               bgColor = "bg-emerald-50 dark:bg-emerald-950/30";
               textColor = "text-emerald-900 dark:text-emerald-100";
@@ -429,6 +464,11 @@ function MonthView({ monthRecords }: { monthRecords: Record<number, DayRecord> }
                 </p>
                 {record?.checkIn && (
                   <div className="text-xs">
+                    {delayMinutes > 0 && (
+                      <p className="mb-1 rounded px-1.5 py-0.5 bg-amber-200 text-amber-900 dark:bg-amber-900 dark:text-amber-100 font-semibold text-xs">
+                        {delayMinutes} min late
+                      </p>
+                    )}
                     <p className={textColor}>
                       {clock(record.checkIn.at)}
                       {record.checkOut && ` → ${clock(record.checkOut.at)}`}
