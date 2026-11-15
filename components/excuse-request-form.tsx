@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { ArrowRight, Check, Clock3, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { addExcuse, loadRequests, onRequestsChanged, type ExcuseRequest } from "@/lib/requests-store";
+import { addExcuse, getExcuseBalance, loadRequests, onRequestsChanged, type ExcuseRequest } from "@/lib/requests-store";
 
 type Slot = "Morning" | "Evening";
 type FormState = "idle" | "submitting" | "submitted";
@@ -16,28 +16,34 @@ const CURRENT_USER = "Ahmed Khalil";
 export function ExcuseRequestForm() {
   const [state, setState] = useState<FormState>("idle");
   const [mine, setMine] = useState<ExcuseRequest[]>([]);
+  const [balance, setBalance] = useState(4);
 
   useEffect(() => {
     const month = new Date().toISOString().slice(0, 7);
-    const refresh = () => setMine(loadRequests().excuses.filter(r => r.employeeName === CURRENT_USER && r.date.slice(0, 7) === month));
+    const refresh = () => {
+      setMine(loadRequests().excuses.filter(r => r.employeeName === CURRENT_USER && r.date.slice(0, 7) === month));
+      const bal = getExcuseBalance(CURRENT_USER);
+      setBalance(bal.totalHours - bal.usedHours - bal.autoDeductedHours);
+    };
     refresh();
     return onRequestsChanged(refresh);
   }, []);
 
-  const HOURS_USED = mine.filter(r => r.status !== "rejected").reduce((sum, r) => sum + r.hoursUsed, 0);
+  const balanceInfo = getExcuseBalance(CURRENT_USER);
   const [form, setForm] = useState({
     date: new Date().toISOString().split("T")[0],
     slot: "" as Slot | "",
+    hours: 1,
     reason: "",
   });
 
-  const remaining = MONTHLY_LIMIT - HOURS_USED;
+  const remaining = balance;
   const exhausted = remaining <= 0;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (exhausted || !form.slot) return;
-    addExcuse({ employeeName: CURRENT_USER, date: form.date, slot: form.slot, reason: form.reason.trim() });
+    if (exhausted || !form.slot || form.hours > remaining) return;
+    addExcuse({ employeeName: CURRENT_USER, date: form.date, slot: form.slot, reason: form.reason.trim(), hoursUsed: form.hours });
     setState("submitted");
   };
 
@@ -49,11 +55,11 @@ export function ExcuseRequestForm() {
         </div>
         <h2 className="mt-4 text-xl font-semibold text-slate-950 dark:text-white">Excuse request submitted</h2>
         <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">
-          Your request is pending approval. You have <b>{Math.max(remaining, 0)} hour{remaining !== 1 ? "s" : ""}</b> remaining this month.
+          Your request for <b>{form.hours} hour{form.hours !== 1 ? "s" : ""}</b> is pending approval. You have <b>{Math.max(remaining - form.hours, 0).toFixed(1)} hour{(remaining - form.hours) !== 1 ? "s" : ""}</b> remaining this month.
         </p>
         <Button
           className="mt-6 bg-[#0B4F4B] text-white hover:bg-[#063C39]"
-          onClick={() => { setState("idle"); setForm({ date: new Date().toISOString().split("T")[0], slot: "", reason: "" }); }}
+          onClick={() => { setState("idle"); setForm({ date: new Date().toISOString().split("T")[0], slot: "", hours: 1, reason: "" }); }}
         >
           Submit another
         </Button>
@@ -67,25 +73,25 @@ export function ExcuseRequestForm() {
       <div className="rounded-3xl border border-[#DCE9E6] bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="border-b border-[#DCE9E6] px-6 py-5 dark:border-slate-800">
           <h2 className="text-base font-semibold text-slate-950 dark:text-white">New excuse request</h2>
-          <p className="mt-1 text-sm text-slate-500">Request a late arrival (morning) or early departure (evening) — 1 hour each.</p>
+          <p className="mt-1 text-sm text-slate-500">Request flexible hours from your 4-hour monthly balance for late arrival (morning) or early departure (evening).</p>
         </div>
 
         {/* Balance bar */}
         <div className="border-b border-[#DCE9E6] px-6 py-4 dark:border-slate-800">
           <div className="flex items-center justify-between text-sm">
             <span className="font-medium text-slate-700 dark:text-slate-300">Monthly excuse balance</span>
-            <span className={`font-semibold ${remaining <= 1 ? "text-rose-600" : "text-[#0B4F4B] dark:text-[#8FD4C6]"}`}>
-              {remaining} / {MONTHLY_LIMIT} hrs remaining
+            <span className={`font-semibold ${remaining <= 0.5 ? "text-rose-600" : "text-[#0B4F4B] dark:text-[#8FD4C6]"}`}>
+              {remaining.toFixed(1)} / {MONTHLY_LIMIT} hrs remaining
             </span>
           </div>
           <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-[#E8F3F1] dark:bg-slate-800">
             <div
-              className={`h-2 rounded-full transition-all ${remaining <= 1 ? "bg-rose-500" : "bg-[#0B4F4B]"}`}
+              className={`h-2 rounded-full transition-all ${remaining <= 0.5 ? "bg-rose-500" : "bg-[#0B4F4B]"}`}
               style={{ width: `${(remaining / MONTHLY_LIMIT) * 100}%` }}
             />
           </div>
           <div className="mt-1.5 flex justify-between text-[11px] text-slate-400">
-            <span>{HOURS_USED} hr{HOURS_USED !== 1 ? "s" : ""} used</span>
+            <span>{(balanceInfo.usedHours + balanceInfo.autoDeductedHours).toFixed(1)} hr{(balanceInfo.usedHours + balanceInfo.autoDeductedHours) !== 1 ? "s" : ""} used{balanceInfo.autoDeductedHours > 0 ? ` (${balanceInfo.autoDeductedHours.toFixed(1)} auto-deducted for delays)` : ""}</span>
             <span>Resets Dec 1</span>
           </div>
         </div>
@@ -132,16 +138,32 @@ export function ExcuseRequestForm() {
                     onChange={() => setForm({ ...form, slot })}
                     className="mt-0.5 accent-[#0B4F4B]"
                   />
-                  <div>
-                    <p className="text-sm font-semibold text-slate-900 dark:text-white">{slot} — 1 hour</p>
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-slate-900 dark:text-white">{slot}</p>
                     <p className="mt-0.5 text-xs text-slate-500">
-                      {slot === "Morning" ? "Late arrival — shift starts 1 hr later" : "Early departure — leaves 1 hr before shift ends"}
+                      {slot === "Morning" ? "Late arrival — shift starts later" : "Early departure — leaves before shift ends"}
                     </p>
                   </div>
                 </label>
               ))}
             </div>
           </div>
+
+          <FormField label="Hours" required>
+            <input
+              required
+              type="number"
+              min="0.5"
+              max={remaining}
+              step="0.5"
+              value={form.hours}
+              onChange={e => setForm({ ...form, hours: parseFloat(e.target.value) })}
+              className="w-full"
+            />
+            <p className="mt-1.5 text-xs text-slate-500">
+              You have {remaining.toFixed(1)} hours available. (0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4)
+            </p>
+          </FormField>
 
           <FormField label="Reason" required>
             <textarea
@@ -157,7 +179,7 @@ export function ExcuseRequestForm() {
           <div className="flex items-start gap-3 rounded-2xl border border-[#DCE9E6] bg-[#F5F8F7] px-4 py-3 dark:border-slate-800 dark:bg-slate-800">
             <Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-[#6C807C]" />
             <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
-              Each approved excuse deducts 1 hour from your monthly balance of 4 hours. Balance resets on the 1st of each month.
+              Your request deducts the specified hours from your 4-hour monthly balance. Any unused balance resets on the 1st of each month. Late check-ins also auto-deduct delays.
             </p>
           </div>
 
@@ -204,7 +226,7 @@ export function ExcuseRequestForm() {
         <div className="rounded-2xl border border-[#DCE9E6] bg-[#F5F8F7] p-4 dark:border-slate-800 dark:bg-slate-900">
           <p className="text-xs font-semibold text-[#0B4F4B] dark:text-[#8FD4C6]">November 2026</p>
           <div className="mt-2 grid grid-cols-2 gap-3">
-            <Stat label="Hours used" value={`${HOURS_USED} / ${MONTHLY_LIMIT}`} />
+            <Stat label="Hours used" value={`${(balanceInfo.usedHours + balanceInfo.autoDeductedHours).toFixed(1)} / ${MONTHLY_LIMIT}`} />
             <Stat label="Remaining" value={`${remaining} hr${remaining !== 1 ? "s" : ""}`} accent={remaining <= 1} />
           </div>
         </div>

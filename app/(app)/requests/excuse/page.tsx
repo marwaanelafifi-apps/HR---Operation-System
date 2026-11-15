@@ -21,7 +21,7 @@ export default function ExcuseRequestPage() {
             Request an excuse
           </h1>
           <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500 dark:text-slate-400">
-            Request a late arrival (morning slot) or early departure (evening slot). Each slot uses 1 hour of your 4-hour monthly balance.
+            Request flexible hours for a late arrival (morning) or early departure (evening) from your 4-hour monthly balance. Unused balance resets on the 1st of each month.
           </p>
         </div>
       </header>
@@ -29,7 +29,7 @@ export default function ExcuseRequestPage() {
       <div className="mb-6 flex items-start gap-3 rounded-2xl border border-[#DCE9E6] bg-[#F5F8F7] px-5 py-4 dark:border-slate-800 dark:bg-slate-900">
         <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-amber-400" />
         <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
-          <b className="text-slate-700 dark:text-slate-300">Prototype mode.</b> This form uses demo data for Ahmed Khalil with 2 hours already used this month. Submissions update this browser session only.
+          <b className="text-slate-700 dark:text-slate-300">Prototype mode.</b> This form uses demo data for Ahmed Khalil with 2 hours already used this month. Delays auto-deduct, unused balance resets monthly. Submissions update this browser session only.
         </p>
       </div>
 

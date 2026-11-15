@@ -45,24 +45,40 @@ export type ExcuseRequest = {
   hoursUsed: number;
   decidedAt?: string;
   decisionNote?: string;
+  isAutoDeducted?: boolean; // auto-deducted from delay, not user-requested
 };
 
-type Store = { visits: VisitRequest[]; excuses: ExcuseRequest[] };
+export type ExcuseBalance = {
+  employeeName: string;
+  month: string; // YYYY-MM
+  totalHours: number; // 4 hours per month
+  usedHours: number;
+  autoDeductedHours: number;
+};
+
+type Store = { visits: VisitRequest[]; excuses: ExcuseRequest[]; excuseBalances: ExcuseBalance[] };
 
 const key = "opshub-demo-requests-v1";
 const changed = "opshub-requests-changed";
 
-const seed = (): Store => ({
-  visits: outsideMeetingRequests.map((r) => ({ ...r })),
-  excuses: excuseRequests.map((r) => ({ ...r })),
-});
+const seed = (): Store => {
+  const today = new Date();
+  const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  return {
+    visits: outsideMeetingRequests.map((r) => ({ ...r })),
+    excuses: excuseRequests.map((r) => ({ ...r })),
+    excuseBalances: [
+      { employeeName: "Ahmed Khalil", month: currentMonth, totalHours: 4, usedHours: 2, autoDeductedHours: 0 },
+    ],
+  };
+};
 
 export function loadRequests(): Store {
   try {
     const raw = window.localStorage.getItem(key);
     if (!raw) return seed();
     const parsed = JSON.parse(raw) as Partial<Store>;
-    return { visits: parsed.visits ?? [], excuses: parsed.excuses ?? [] };
+    return { visits: parsed.visits ?? [], excuses: parsed.excuses ?? [], excuseBalances: parsed.excuseBalances ?? [] };
   } catch {
     return seed();
   }
@@ -80,9 +96,9 @@ export function addVisit(visit: Omit<VisitRequest, "id" | "status" | "submittedA
   save({ ...store, visits: [{ ...visit, id: `omr-${Date.now()}`, status: "pending", submittedAt: nowLabel() }, ...store.visits] });
 }
 
-export function addExcuse(excuse: Omit<ExcuseRequest, "id" | "status" | "submittedAt" | "hoursUsed">) {
+export function addExcuse(excuse: Omit<ExcuseRequest, "id" | "status" | "submittedAt"> & { hoursUsed?: number }) {
   const store = loadRequests();
-  save({ ...store, excuses: [{ ...excuse, id: `exc-${Date.now()}`, status: "pending", submittedAt: nowLabel(), hoursUsed: 1 }, ...store.excuses] });
+  save({ ...store, excuses: [{ ...excuse, id: `exc-${Date.now()}`, status: "pending", submittedAt: nowLabel(), hoursUsed: excuse.hoursUsed ?? 1 }, ...store.excuses] });
 }
 
 export function decide(
@@ -148,6 +164,46 @@ export function confirmFieldCheckIn(visitId: string) {
       v.id === visitId ? { ...v, fieldCheckIn: { at: new Date().toISOString(), confirmed: true } } : v
     ),
   });
+}
+
+/** Get excuse balance for current month. Creates one if missing. */
+export function getExcuseBalance(employeeName: string): ExcuseBalance {
+  const today = new Date();
+  const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  const store = loadRequests();
+
+  let balance = store.excuseBalances.find((b) => b.employeeName === employeeName && b.month === currentMonth);
+  if (!balance) {
+    balance = { employeeName, month: currentMonth, totalHours: 4, usedHours: 0, autoDeductedHours: 0 };
+    save({ ...store, excuseBalances: [...store.excuseBalances, balance] });
+  }
+  return balance;
+}
+
+/** Remaining hours available (not used + not auto-deducted). */
+export function getRemainingExcuseHours(employeeName: string): number {
+  const balance = getExcuseBalance(employeeName);
+  return balance.totalHours - balance.usedHours - balance.autoDeductedHours;
+}
+
+/** Auto-deduct delay minutes from excuse balance. */
+export function autoDeductDelay(employeeName: string, delayMinutes: number): number {
+  const store = loadRequests();
+  const balance = getExcuseBalance(employeeName);
+  const delayHours = delayMinutes / 60;
+  const remaining = getRemainingExcuseHours(employeeName);
+  const deductHours = Math.min(delayHours, remaining);
+
+  if (deductHours > 0) {
+    const updated = store.excuseBalances.map((b) =>
+      b.employeeName === employeeName && b.month === balance.month
+        ? { ...b, autoDeductedHours: b.autoDeductedHours + deductHours }
+        : b
+    );
+    save({ ...store, excuseBalances: updated });
+    return deductHours;
+  }
+  return 0;
 }
 
 export function pendingCount() {

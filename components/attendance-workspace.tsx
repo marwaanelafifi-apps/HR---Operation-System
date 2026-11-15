@@ -6,7 +6,7 @@ import { AlertTriangle, Check, Clock3, Lock, LoaderCircle, LogOut, MapPin, Shiel
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { distanceMetres, formatDistance, getPosition, loadOffice, loadUnlocks, type GeoFailure, type OfficeLocation } from "@/lib/office-location";
-import { confirmFieldCheckIn, getTodayFieldVisits, onRequestsChanged, openVisitsForUser, type VisitRequest } from "@/lib/requests-store";
+import { autoDeductDelay, confirmFieldCheckIn, getTodayFieldVisits, onRequestsChanged, openVisitsForUser, type VisitRequest } from "@/lib/requests-store";
 
 const EMPLOYEE_ID = "ahmed-khalil"; // demo user until real sign-in exists
 const EMPLOYEE_NAME = "Ahmed Khalil";
@@ -122,10 +122,23 @@ export function AttendanceWorkspace() {
           return;
         }
       }
+      const now = new Date().toISOString();
+
+      // Auto-deduct delay from excuse balance if checking in late
+      if (kind === "in" && !fromField && !unlocked) {
+        const checkInTime = new Date(now);
+        const shiftStart = new Date(checkInTime);
+        shiftStart.setHours(shift.startHour, 0, 0, 0);
+        const delayMinutes = Math.round((checkInTime.getTime() - shiftStart.getTime()) / 60000);
+        if (delayMinutes > 0) {
+          autoDeductDelay(EMPLOYEE_NAME, delayMinutes);
+        }
+      }
+
       const next: DayRecord = {
         ...record,
         [kind === "in" ? "checkIn" : "checkOut"]: {
-          at: new Date().toISOString(),
+          at: now,
           distance,
           accuracy,
           waived: unlocked,
