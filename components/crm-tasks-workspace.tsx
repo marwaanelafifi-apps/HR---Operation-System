@@ -156,7 +156,10 @@ const EMPTY_ASSESSMENT: ProjectAssessment = {
   unitTypes: "", maintenance: "", deliveryDate: "",
 };
 
+type KnowledgeMode = "text" | "voice";
+
 function KnowledgeTaskForm({ date, onDone }: { date: string; onDone: () => void }) {
+  const [mode, setMode] = useState<KnowledgeMode | null>(null); // null = choosing
   const [form, setForm] = useState<ProjectAssessment>({ ...EMPTY_ASSESSMENT, salesName: ME_NAME, date });
   const [voiceLang, setVoiceLang] = useState<"ar" | "en">("ar");
   const [isRecording, setIsRecording] = useState(false);
@@ -168,7 +171,7 @@ function KnowledgeTaskForm({ date, onDone }: { date: string; onDone: () => void 
     setVoiceSupported(!!(window.SpeechRecognition || window.webkitSpeechRecognition));
   }, []);
 
-  function set(key: keyof ProjectAssessment, val: string) {
+  function setField(key: keyof ProjectAssessment, val: string) {
     setForm(prev => ({ ...prev, [key]: val }));
   }
 
@@ -201,16 +204,23 @@ function KnowledgeTaskForm({ date, onDone }: { date: string; onDone: () => void 
   }
 
   const requiredFields: (keyof ProjectAssessment)[] = ["companyName", "projectName", "location"];
-  const canSubmit = requiredFields.every(f => form[f].trim());
+  const textCanSubmit = requiredFields.every(f => form[f].trim());
+  const voiceCanSubmit = !!transcript.trim();
 
   function handleSubmit() {
-    if (!canSubmit) return;
-    const data: KnowledgeTaskData = {
-      assessment: form,
-      voiceNoteTranscript: transcript || undefined,
-      voiceNoteLanguage: transcript ? voiceLang : undefined,
-    };
-    addDailyTask({ employeeId: ME_ID, employeeName: ME_NAME, date, taskType: "knowledge", data });
+    if (mode === "text") {
+      if (!textCanSubmit) return;
+      const data: KnowledgeTaskData = { assessment: form };
+      addDailyTask({ employeeId: ME_ID, employeeName: ME_NAME, date, taskType: "knowledge", data });
+    } else {
+      if (!voiceCanSubmit) return;
+      const data: KnowledgeTaskData = {
+        assessment: { ...EMPTY_ASSESSMENT, salesName: ME_NAME, date },
+        voiceNoteTranscript: transcript.trim(),
+        voiceNoteLanguage: voiceLang,
+      };
+      addDailyTask({ employeeId: ME_ID, employeeName: ME_NAME, date, taskType: "knowledge", data });
+    }
     onDone();
   }
 
@@ -219,54 +229,141 @@ function KnowledgeTaskForm({ date, onDone }: { date: string; onDone: () => void 
       <div>
         <label className={labelCls}>{label}</label>
         {multiline ? (
-          <textarea rows={3} value={form[k]} onChange={e => set(k, e.target.value)} placeholder={placeholder}
+          <textarea rows={3} value={form[k]} onChange={e => setField(k, e.target.value)} placeholder={placeholder}
             className={`${inputCls} resize-none`} />
         ) : (
-          <input type="text" value={form[k]} onChange={e => set(k, e.target.value)} placeholder={placeholder} className={inputCls} />
+          <input type="text" value={form[k]} onChange={e => setField(k, e.target.value)} placeholder={placeholder} className={inputCls} />
         )}
       </div>
     );
   }
 
-  return (
-    <div className="space-y-6">
-      {/* Voice note */}
-      <div className="rounded-2xl border border-[#DCE9E6] bg-[#F5F8F7] p-5 dark:border-slate-700 dark:bg-slate-800">
-        <p className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">Voice Note <span className="ml-1 font-normal text-slate-400">(optional)</span></p>
-        {voiceSupported ? (
-          <>
-            <div className="mb-3 flex items-center gap-3">
-              <span className={labelCls + " mb-0"}>Language</span>
-              {(["ar", "en"] as const).map(l => (
-                <label key={l} className="flex cursor-pointer items-center gap-1.5 text-sm font-medium text-slate-600 dark:text-slate-300">
-                  <input type="radio" name="voiceLang" value={l} checked={voiceLang === l} onChange={() => setVoiceLang(l)}
-                    className="accent-[#0B4F4B]" />
-                  {l === "ar" ? "Arabic" : "English"}
-                </label>
-              ))}
+  // ── Mode selector ──────────────────────────────────────────────────────────
+  if (mode === null) {
+    return (
+      <div className="space-y-4">
+        <p className="text-sm text-slate-500 dark:text-slate-400">How would you like to complete this assessment?</p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <button
+            onClick={() => setMode("text")}
+            className="flex flex-col items-center gap-3 rounded-2xl border-2 border-[#DCE9E6] bg-white p-6 text-center transition hover:border-[#0B4F4B] hover:bg-[#E8F3F1] dark:border-slate-700 dark:bg-slate-900 dark:hover:border-[#2E7D76] dark:hover:bg-[#0B2927]"
+          >
+            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[#E8F3F1] dark:bg-[#0B2927]">
+              <svg className="h-6 w-6 text-[#0B4F4B] dark:text-[#8FD4C6]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </span>
+            <div>
+              <p className="font-semibold text-slate-900 dark:text-white">Fill Form</p>
+              <p className="mt-1 text-xs text-slate-400">Type in the project assessment fields</p>
             </div>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={isRecording ? stopRecording : startRecording}
-                className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${isRecording ? "bg-rose-100 text-rose-700 hover:bg-rose-200 dark:bg-rose-950 dark:text-rose-300" : "bg-[#0B4F4B] text-white hover:bg-[#063C39]"}`}
-              >
-                {isRecording ? <><MicOff className="h-4 w-4" /> Stop Recording</> : <><Mic className="h-4 w-4" /> Start Recording</>}
-              </button>
-              {isRecording && <span className="flex items-center gap-1.5 text-xs font-medium text-rose-600"><span className="h-2 w-2 animate-pulse rounded-full bg-rose-500" /> Recording…</span>}
+          </button>
+
+          <button
+            onClick={() => setMode("voice")}
+            disabled={!voiceSupported}
+            className="flex flex-col items-center gap-3 rounded-2xl border-2 border-[#DCE9E6] bg-white p-6 text-center transition hover:border-[#0B4F4B] hover:bg-[#E8F3F1] disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-[#2E7D76] dark:hover:bg-[#0B2927]"
+          >
+            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[#E8F3F1] dark:bg-[#0B2927]">
+              <Mic className="h-6 w-6 text-[#0B4F4B] dark:text-[#8FD4C6]" />
+            </span>
+            <div>
+              <p className="font-semibold text-slate-900 dark:text-white">Voice Note</p>
+              <p className="mt-1 text-xs text-slate-400">
+                {voiceSupported ? "Record and transcribe in Arabic or English" : "Requires Chrome or Edge"}
+              </p>
             </div>
-            {transcript && (
-              <div className="mt-3 rounded-xl border border-[#DCE9E6] bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Transcript</p>
-                <p className={`text-sm leading-6 text-slate-700 dark:text-slate-200 ${voiceLang === "ar" ? "text-right" : ""}`} dir={voiceLang === "ar" ? "rtl" : "ltr"}>{transcript}</p>
-              </div>
+          </button>
+        </div>
+        <div className="flex justify-end pt-2">
+          <Button variant="outline" onClick={onDone}>Cancel</Button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Voice mode ─────────────────────────────────────────────────────────────
+  if (mode === "voice") {
+    return (
+      <div className="space-y-5">
+        <div className="flex items-center gap-3">
+          <button onClick={() => { stopRecording(); setMode(null); setTranscript(""); }}
+            className="flex items-center gap-1.5 text-xs font-semibold text-slate-400 transition hover:text-[#0B4F4B] dark:hover:text-[#8FD4C6]">
+            ← Change method
+          </button>
+        </div>
+
+        <div className="rounded-2xl border border-[#DCE9E6] bg-[#F5F8F7] p-5 dark:border-slate-700 dark:bg-slate-800">
+          <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
+            Speak your project assessment. The system will transcribe your voice exactly as spoken.
+          </p>
+          <div className="mb-4 flex items-center gap-4">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Language</span>
+            {(["ar", "en"] as const).map(l => (
+              <label key={l} className="flex cursor-pointer items-center gap-1.5 text-sm font-medium text-slate-600 dark:text-slate-300">
+                <input type="radio" name="voiceLang" value={l} checked={voiceLang === l} onChange={() => { if (!isRecording) setVoiceLang(l); }}
+                  className="accent-[#0B4F4B]" />
+                {l === "ar" ? "العربية (Arabic)" : "English"}
+              </label>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={isRecording ? stopRecording : startRecording}
+              className={`flex items-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold transition ${isRecording ? "bg-rose-100 text-rose-700 hover:bg-rose-200 dark:bg-rose-950 dark:text-rose-300" : "bg-[#0B4F4B] text-white hover:bg-[#063C39]"}`}
+            >
+              {isRecording ? <><MicOff className="h-4 w-4" /> Stop</> : <><Mic className="h-4 w-4" /> Start Recording</>}
+            </button>
+            {isRecording && (
+              <span className="flex items-center gap-1.5 text-sm font-medium text-rose-600 dark:text-rose-400">
+                <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-rose-500" /> Recording…
+              </span>
             )}
-          </>
+            {!isRecording && transcript && (
+              <button onClick={() => setTranscript("")} className="text-xs text-slate-400 transition hover:text-rose-500">
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+
+        {transcript ? (
+          <div className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Transcript</p>
+            <p
+              className={`text-sm leading-7 text-slate-800 dark:text-slate-100 ${voiceLang === "ar" ? "text-right" : ""}`}
+              dir={voiceLang === "ar" ? "rtl" : "ltr"}
+            >
+              {transcript}
+            </p>
+          </div>
         ) : (
-          <p className="text-sm text-slate-400">Voice recording requires Chrome or Edge browser.</p>
+          <div className="rounded-2xl border border-dashed border-[#DCE9E6] bg-white p-6 text-center text-sm text-slate-400 dark:border-slate-700 dark:bg-slate-900">
+            Transcript will appear here as you speak
+          </div>
         )}
+
+        <div className="flex justify-end gap-3 border-t border-[#DCE9E6] pt-4 dark:border-slate-700">
+          <Button variant="outline" onClick={onDone}>Cancel</Button>
+          <Button onClick={handleSubmit} disabled={!voiceCanSubmit || isRecording}>
+            <Check className="h-4 w-4" /> Save & Complete
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Text / form mode ───────────────────────────────────────────────────────
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center gap-3">
+        <button onClick={() => setMode(null)}
+          className="flex items-center gap-1.5 text-xs font-semibold text-slate-400 transition hover:text-[#0B4F4B] dark:hover:text-[#8FD4C6]">
+          ← Change method
+        </button>
       </div>
 
-      {/* Project Assessment form */}
       <div className="space-y-4">
         <p className="text-xs font-semibold uppercase tracking-wide text-[#0B4F4B] dark:text-[#8FD4C6]">Project Assessment</p>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -296,7 +393,7 @@ function KnowledgeTaskForm({ date, onDone }: { date: string; onDone: () => void 
 
       <div className="flex justify-end gap-3 border-t border-[#DCE9E6] pt-4 dark:border-slate-700">
         <Button variant="outline" onClick={onDone}>Cancel</Button>
-        <Button onClick={handleSubmit} disabled={!canSubmit}>
+        <Button onClick={handleSubmit} disabled={!textCanSubmit}>
           <Check className="h-4 w-4" /> Mark Complete
         </Button>
       </div>
