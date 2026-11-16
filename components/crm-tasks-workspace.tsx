@@ -11,8 +11,8 @@ import {
   addDailyTask, addCRMRequest, detectSocialPlatform, isValidSocialUrl,
   onCRMChanged, requestsForEmployeeOnDate, taskForEmployeeOnDate,
   DAILY_REQUESTS_TARGET, LEAD_SOURCES,
-  type AdsTaskData, type CallsTaskData, type KnowledgeTaskData,
-  type ProjectAssessment, type RotationTaskData,
+  type AdsTaskData, type CallsTaskData, type CRMRequest, type DailyTask,
+  type KnowledgeTaskData, type ProjectAssessment, type RotationTaskData,
 } from "@/lib/crm-store";
 import { loadRequests } from "@/lib/requests-store";
 import { employees } from "@/lib/mock-data";
@@ -576,24 +576,45 @@ function RequestForm({ date, onDone, onCancel }: { date: string; onDone: () => v
 // ── Main workspace ────────────────────────────────────────────────────────────
 type ModalType = "ads" | "knowledge" | "calls" | "rotation" | "request" | null;
 
+type LiveData = {
+  requests: CRMRequest[];
+  adsTask: DailyTask | undefined;
+  knowledgeTask: DailyTask | undefined;
+  callsTask: DailyTask | undefined;
+  rotationTask: DailyTask | undefined;
+  meetingsToday: number;
+};
+
+const EMPTY_LIVE: LiveData = {
+  requests: [], adsTask: undefined, knowledgeTask: undefined,
+  callsTask: undefined, rotationTask: undefined, meetingsToday: 0,
+};
+
 export function CRMTasksWorkspace() {
   const [today] = useState(todayISO);
   const [modal, setModal] = useState<ModalType>(null);
-  const [tick, setTick] = useState(0);
+  const [ready, setReady] = useState(false);
+  const [live, setLive] = useState<LiveData>(EMPTY_LIVE);
 
   useEffect(() => {
-    const unsub = onCRMChanged(() => setTick(t => t + 1));
-    return unsub;
-  }, []);
+    function refresh() {
+      setLive({
+        requests: requestsForEmployeeOnDate(ME_ID, today),
+        adsTask: taskForEmployeeOnDate(ME_ID, today, "ads"),
+        knowledgeTask: taskForEmployeeOnDate(ME_ID, today, "knowledge"),
+        callsTask: taskForEmployeeOnDate(ME_ID, today, "calls"),
+        rotationTask: taskForEmployeeOnDate(ME_ID, today, "rotation"),
+        meetingsToday: countMeetingsToday(today),
+      });
+      setReady(true);
+    }
+    refresh();
+    return onCRMChanged(refresh);
+  }, [today]);
 
-  const requests = requestsForEmployeeOnDate(ME_ID, today);
-  const adsTask = taskForEmployeeOnDate(ME_ID, today, "ads");
-  const knowledgeTask = taskForEmployeeOnDate(ME_ID, today, "knowledge");
-  const callsTask = taskForEmployeeOnDate(ME_ID, today, "calls");
-  const rotationTask = taskForEmployeeOnDate(ME_ID, today, "rotation");
-  const meetingsToday = countMeetingsToday(today);
+  if (!ready) return null;
 
-  void tick;
+  const { requests, adsTask, knowledgeTask, callsTask, rotationTask, meetingsToday } = live;
 
   const tasks = [
     {

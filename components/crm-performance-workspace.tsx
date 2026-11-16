@@ -388,6 +388,7 @@ export function CRMPerformanceWorkspace() {
   const today = todayISO();
   const todayDate = new Date();
 
+  const [ready, setReady] = useState(false);
   const [selectedEmpId, setSelectedEmpId] = useState(SALES_EMPLOYEES[0]?.id ?? "");
   const [viewMode, setViewMode] = useState<ViewMode>("day");
   const [selectedDate, setSelectedDate] = useState(today);
@@ -397,11 +398,14 @@ export function CRMPerformanceWorkspace() {
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
+    setReady(true);
     const unsub = onCRMChanged(() => setTick(t => t + 1));
     return unsub;
   }, []);
 
   void tick;
+
+  if (!ready) return null;
 
   const selectedEmp = SALES_EMPLOYEES.find(e => e.id === selectedEmpId) ?? SALES_EMPLOYEES[0];
 
