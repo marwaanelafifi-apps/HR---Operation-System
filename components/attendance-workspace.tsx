@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { distanceMetres, formatDistance, getPosition, loadOffice, loadUnlocks, type GeoFailure, type OfficeLocation } from "@/lib/office-location";
 import { autoDeductDelay, confirmFieldCheckIn, getTodayFieldVisits, onRequestsChanged, openVisitsForUser, type VisitRequest } from "@/lib/requests-store";
 import { calcDelayMinutes, deductionForDelay, deductionLabel, isDayOff, loadWorkSchedule, offDaysInMonth, type WorkSchedule } from "@/lib/work-schedule";
+import { deductionsForEmployeeInMonth, type CRMDeduction } from "@/lib/crm-store";
 
 const EMPLOYEE_ID = "ahmed-khalil"; // demo user until real sign-in exists
 const EMPLOYEE_NAME = "Ahmed Khalil";
@@ -304,17 +305,46 @@ export function AttendanceWorkspace() {
         </section>
 
         <aside className="space-y-4">
-          <section className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-            <h2 className="text-base font-semibold">Today</h2>
-            <dl className="mt-4 space-y-3 text-sm">
-              {workSchedule && <Line label="Shift" value={(() => { const d = workSchedule.days[new Date().getDay()]; return d ? `${String(d.startHour % 12 || 12).padStart(1)}:${String(d.startMinute).padStart(2,"0")} ${d.startHour < 12 ? "AM" : "PM"} – ${String(d.endHour % 12 || 12)}:${String(d.endMinute).padStart(2,"0")} ${d.endHour < 12 ? "AM" : "PM"}` : "—"; })()} />}
-              <Line label="Check-in" value={record.checkIn ? clock(record.checkIn.at) : "—"} note={record.checkIn ? (record.checkIn.waived ? "Waived by admin" : record.checkIn.kind === "field" ? `At ${record.checkIn.meetingZone}${record.checkIn.projectName ? ` · ${record.checkIn.projectName}` : ""}` : record.checkIn.distance !== null ? `${formatDistance(record.checkIn.distance)} from office${record.checkIn.accuracy ? `, ±${Math.round(record.checkIn.accuracy)} m` : ""}` : undefined) : undefined} />
-              <Line label="Check-out" value={record.checkOut ? clock(record.checkOut.at) : "—"} note={record.checkOut ? (record.checkOut.kind === "field" ? `At ${record.checkOut.meetingZone}${record.checkOut.projectName ? ` · ${record.checkOut.projectName}` : ""}` : undefined) : undefined} />
-              <Line label="Worked" value={worked()} />
-            </dl>
-            {record.checkIn && <button onClick={resetToday} className="mt-4 block text-xs font-semibold text-slate-500 underline-offset-4 hover:text-[#0B4F4B] hover:underline">Reset today&apos;s record (demo only)</button>}
-            <Link href="/requests/excuse" className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-[#0B4F4B] hover:underline dark:text-[#8FD4C6]"><Clock3 className="h-4 w-4" />Running late? Request an excuse</Link>
-          </section>
+          {(() => {
+            const now = new Date();
+            const todayISO = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}`;
+            const todayCRMDeductions = deductionsForEmployeeInMonth(EMPLOYEE_ID, now.getFullYear(), now.getMonth()).filter(d => d.date === todayISO);
+            const delayMins = record.checkIn && workSchedule ? calcDelayMinutes(record.checkIn.at, workSchedule) : 0;
+            const delayDeductFrac = delayMins > 0 ? deductionForDelay(delayMins, workSchedule!) : 0;
+            const hasDeductions = todayCRMDeductions.length > 0 || delayDeductFrac > 0;
+            return (
+              <section className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+                <h2 className="text-base font-semibold">Today</h2>
+                <dl className="mt-4 space-y-3 text-sm">
+                  {workSchedule && <Line label="Shift" value={(() => { const d = workSchedule.days[new Date().getDay()]; return d ? `${String(d.startHour % 12 || 12).padStart(1)}:${String(d.startMinute).padStart(2,"0")} ${d.startHour < 12 ? "AM" : "PM"} – ${String(d.endHour % 12 || 12)}:${String(d.endMinute).padStart(2,"0")} ${d.endHour < 12 ? "AM" : "PM"}` : "—"; })()} />}
+                  <Line label="Check-in" value={record.checkIn ? clock(record.checkIn.at) : "—"} note={record.checkIn ? (record.checkIn.waived ? "Waived by admin" : record.checkIn.kind === "field" ? `At ${record.checkIn.meetingZone}${record.checkIn.projectName ? ` · ${record.checkIn.projectName}` : ""}` : record.checkIn.distance !== null ? `${formatDistance(record.checkIn.distance)} from office${record.checkIn.accuracy ? `, ±${Math.round(record.checkIn.accuracy)} m` : ""}` : undefined) : undefined} />
+                  <Line label="Check-out" value={record.checkOut ? clock(record.checkOut.at) : "—"} note={record.checkOut ? (record.checkOut.kind === "field" ? `At ${record.checkOut.meetingZone}${record.checkOut.projectName ? ` · ${record.checkOut.projectName}` : ""}` : undefined) : undefined} />
+                  <Line label="Worked" value={worked()} />
+                </dl>
+                {hasDeductions && (
+                  <div className="mt-4 rounded-xl border border-rose-100 bg-rose-50 p-3 dark:border-rose-900 dark:bg-rose-950/30">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-rose-600 dark:text-rose-400">Deductions today</p>
+                    <div className="space-y-1.5 text-xs">
+                      {delayDeductFrac > 0 && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-600 dark:text-slate-300">Late arrival ({delayMins} min)</span>
+                          <span className="font-semibold text-rose-600">{deductionLabel(delayDeductFrac)}</span>
+                        </div>
+                      )}
+                      {todayCRMDeductions.map(d => (
+                        <div key={d.id} className="flex justify-between">
+                          <span className="text-slate-600 dark:text-slate-300 truncate max-w-[180px]">{d.reason}</span>
+                          <span className="ml-2 font-semibold text-rose-600 shrink-0">-{d.deductionDays} day(s)</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {record.checkIn && <button onClick={resetToday} className="mt-4 block text-xs font-semibold text-slate-500 underline-offset-4 hover:text-[#0B4F4B] hover:underline">Reset today&apos;s record (demo only)</button>}
+                <Link href="/requests/excuse" className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-[#0B4F4B] hover:underline dark:text-[#8FD4C6]"><Clock3 className="h-4 w-4" />Running late? Request an excuse</Link>
+              </section>
+            );
+          })()}
 
           <section className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
             <h2 className="text-base font-semibold">Office</h2>
@@ -332,13 +362,13 @@ export function AttendanceWorkspace() {
       )}
 
       {tab === "month" && ready && workSchedule && (
-        <MonthView monthRecords={monthRecords} workSchedule={workSchedule} />
+        <MonthView monthRecords={monthRecords} workSchedule={workSchedule} crmDeductions={deductionsForEmployeeInMonth(EMPLOYEE_ID, new Date().getFullYear(), new Date().getMonth())} />
       )}
     </div>
   );
 }
 
-function MonthView({ monthRecords, workSchedule }: { monthRecords: Record<number, DayRecord>; workSchedule: WorkSchedule }) {
+function MonthView({ monthRecords, workSchedule, crmDeductions = [] }: { monthRecords: Record<number, DayRecord>; workSchedule: WorkSchedule; crmDeductions?: CRMDeduction[] }) {
   const today = new Date();
   const year = today.getFullYear();
   const month = today.getMonth();
@@ -363,10 +393,18 @@ function MonthView({ monthRecords, workSchedule }: { monthRecords: Record<number
   }, { daysPresent: 0, lateDays: 0, totalLateMinutes: 0, totalMinutes: 0 });
 
   const absenceDays = Array.from({ length: daysInMonth }, (_, i) => i + 1).filter(d => !offDays.has(d) && !monthRecords[d]?.checkIn);
+  const totalCRMDeductionDays = crmDeductions.reduce((s, d) => s + d.deductionDays, 0);
+  const totalDelayDeductionDays = Object.entries(monthRecords).reduce((acc, [dayStr, rec]) => {
+    const dayNum = parseInt(dayStr, 10);
+    if (!rec?.checkIn || offDays.has(dayNum)) return acc;
+    const dm = calcDelayMinutes(rec.checkIn.at, workSchedule);
+    return dm > 0 ? acc + deductionForDelay(dm, workSchedule) : acc;
+  }, 0);
+  const totalDeductionDays = +(totalCRMDeductionDays + totalDelayDeductionDays).toFixed(2);
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-3 sm:grid-cols-5">
+      <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <div className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Days present</p>
           <p className="mt-2 text-2xl font-semibold text-emerald-600">{stats.daysPresent}</p>
@@ -392,6 +430,11 @@ function MonthView({ monthRecords, workSchedule }: { monthRecords: Record<number
           <p className="mt-2 text-2xl font-semibold text-slate-950 dark:text-white">{stats.daysPresent > 0 ? (stats.totalMinutes / stats.daysPresent / 60).toFixed(1) : "0"}</p>
           <p className="text-xs text-slate-400">hours per day</p>
         </div>
+        <div className={`rounded-2xl border p-5 ${totalDeductionDays > 0 ? "border-rose-200 bg-rose-50 dark:border-rose-800 dark:bg-rose-950/30" : "border-[#DCE9E6] bg-white dark:border-slate-800 dark:bg-slate-900"}`}>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Deductions</p>
+          <p className={`mt-2 text-2xl font-semibold ${totalDeductionDays > 0 ? "text-rose-600" : "text-slate-950 dark:text-white"}`}>{totalDeductionDays > 0 ? `-${totalDeductionDays}` : "0"}</p>
+          <p className="text-xs text-slate-400">day(s) this month</p>
+        </div>
       </div>
 
       <div className="rounded-2xl border border-[#DCE9E6] bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
@@ -409,6 +452,8 @@ function MonthView({ monthRecords, workSchedule }: { monthRecords: Record<number
             const isOff = offDays.has(dayNum);
             const dm = rec?.checkIn && !isOff ? calcDelayMinutes(rec.checkIn.at, workSchedule) : 0;
             const deductFrac = dm > 0 ? deductionForDelay(dm, workSchedule) : 0;
+            const ds = `${year}-${String(month + 1).padStart(2, "0")}-${String(dayNum).padStart(2, "0")}`;
+            const dayCRMDeductions = crmDeductions.filter(d => d.date === ds);
 
             const bgColor = isOff ? "bg-slate-100 dark:bg-slate-700" :
               dm > 0 ? "bg-amber-50 dark:bg-amber-950/30" :
@@ -436,6 +481,15 @@ function MonthView({ monthRecords, workSchedule }: { monthRecords: Record<number
                     )}
                     <p className={textColor}>{clock(rec.checkIn.at)}{rec.checkOut && ` → ${clock(rec.checkOut.at)}`}</p>
                     {rec.checkOut && <p className="text-slate-500">{Math.floor((new Date(rec.checkOut.at).getTime() - new Date(rec.checkIn.at).getTime()) / 3600000)}h</p>}
+                  </div>
+                )}
+                {dayCRMDeductions.length > 0 && (
+                  <div className="mt-1 space-y-0.5">
+                    {dayCRMDeductions.map(d => (
+                      <p key={d.id} className="rounded px-1.5 py-0.5 bg-rose-200 text-rose-900 dark:bg-rose-900 dark:text-rose-100 text-xs font-semibold">
+                        -{d.deductionDays}d
+                      </p>
+                    ))}
                   </div>
                 )}
               </div>

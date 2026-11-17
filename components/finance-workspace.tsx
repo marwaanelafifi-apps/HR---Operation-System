@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { loadRequests, onRequestsChanged, type VisitRequest } from "@/lib/requests-store";
 import { employees } from "@/lib/mock-data";
 import { calcDelayMinutes, deductionForDelay, deductionLabel, isDayOff, loadWorkSchedule, offDaysInMonth, type WorkSchedule } from "@/lib/work-schedule";
+import { deductionsForEmployeeInMonth, type CRMDeduction } from "@/lib/crm-store";
 
 type FinanceTab = "expenses" | "attendance";
 
@@ -209,13 +210,16 @@ function AttendanceSection() {
   const [viewMonth, setViewMonth] = useState(today.getMonth());
   const [monthRecords, setMonthRecords] = useState<Record<number, DayRecord>>({});
   const [schedule, setSchedule] = useState<WorkSchedule | null>(null);
+  const [crmDeductions, setCrmDeductions] = useState<CRMDeduction[]>([]);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     setSchedule(loadWorkSchedule());
     setMonthRecords(getMonthRecords(viewYear, viewMonth));
+    const emp = employees.find(e => e.name === selectedEmp);
+    setCrmDeductions(emp ? deductionsForEmployeeInMonth(emp.id, viewYear, viewMonth) : []);
     setReady(true);
-  }, [viewYear, viewMonth]);
+  }, [viewYear, viewMonth, selectedEmp]);
 
   function prevMonth() {
     if (viewMonth === 0) { setViewYear(y => y - 1); setViewMonth(11); }
@@ -232,7 +236,7 @@ function AttendanceSection() {
   const offDays = useMemo(() => schedule ? offDaysInMonth(viewYear, viewMonth, schedule) : new Set<number>(), [schedule, viewYear, viewMonth]);
 
   const stats = useMemo(() => {
-    if (!schedule) return { present: 0, late: 0, absent: 0, lateMinTotal: 0, hoursTotal: 0 };
+    if (!schedule) return { present: 0, late: 0, absent: 0, lateMinTotal: 0, hoursTotal: 0, delayDeductDays: 0 };
     return Object.entries(monthRecords).reduce((acc, [dayStr, r]) => {
       const d = parseInt(dayStr, 10);
       const isWorkday = !offDays.has(d);
@@ -242,13 +246,17 @@ function AttendanceSection() {
       if (r.checkIn) {
         acc.present++;
         const dm = delayMinsForRecord(r, schedule);
-        if (dm > 0 && isWorkday) { acc.late++; acc.lateMinTotal += dm; }
+        if (dm > 0 && isWorkday) {
+          acc.late++;
+          acc.lateMinTotal += dm;
+          acc.delayDeductDays += deductionForDelay(dm, schedule);
+        }
       } else if (isWorkday) {
         acc.absent++;
       }
       acc.hoursTotal += hoursWorked(r);
       return acc;
-    }, { present: 0, late: 0, absent: 0, lateMinTotal: 0, hoursTotal: 0 });
+    }, { present: 0, late: 0, absent: 0, lateMinTotal: 0, hoursTotal: 0, delayDeductDays: 0 });
   }, [monthRecords, viewYear, viewMonth, today, offDays, schedule]);
 
   function handleExportSingle() {
@@ -311,23 +319,28 @@ function AttendanceSection() {
       </div>
 
       {/* Stats */}
-      {ready && (
-        <div className="grid gap-3 sm:grid-cols-5">
-          {[
-            { label: "Days Present", value: stats.present, color: "text-emerald-600", sub: "checked in" },
-            { label: "Days Late", value: stats.late, color: "text-amber-600", sub: stats.late > 0 ? `${Math.round(stats.lateMinTotal / stats.late)} min avg` : "no delays" },
-            { label: "Days Absent", value: stats.absent, color: "text-rose-600", sub: "no record" },
-            { label: "Total Hours", value: stats.hoursTotal.toFixed(1), color: "text-slate-950 dark:text-white", sub: "hours worked" },
-            { label: "Avg Hours/Day", value: stats.present > 0 ? (stats.hoursTotal / stats.present).toFixed(1) : "0.0", color: "text-slate-950 dark:text-white", sub: "per present day" },
-          ].map(({ label, value, color, sub }) => (
-            <div key={label} className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-              <p className={`mt-2 text-2xl font-semibold ${color}`}>{value}</p>
-              <p className="text-xs text-slate-400">{sub}</p>
-            </div>
-          ))}
-        </div>
-      )}
+      {ready && (() => {
+        const crmTotal = crmDeductions.reduce((s, d) => s + d.deductionDays, 0);
+        const totalDeduct = +(crmTotal + stats.delayDeductDays).toFixed(2);
+        return (
+          <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            {[
+              { label: "Days Present", value: stats.present, color: "text-emerald-600", sub: "checked in" },
+              { label: "Days Late", value: stats.late, color: "text-amber-600", sub: stats.late > 0 ? `${Math.round(stats.lateMinTotal / stats.late)} min avg` : "no delays" },
+              { label: "Days Absent", value: stats.absent, color: "text-rose-600", sub: "no record" },
+              { label: "Total Hours", value: stats.hoursTotal.toFixed(1), color: "text-slate-950 dark:text-white", sub: "hours worked" },
+              { label: "Avg Hours/Day", value: stats.present > 0 ? (stats.hoursTotal / stats.present).toFixed(1) : "0.0", color: "text-slate-950 dark:text-white", sub: "per present day" },
+              { label: "Total Deductions", value: totalDeduct > 0 ? `−${totalDeduct}d` : "None", color: totalDeduct > 0 ? "text-red-600" : "text-slate-400", sub: `${crmTotal > 0 ? `${crmTotal}d mgmt` : ""}${crmTotal > 0 && stats.delayDeductDays > 0 ? " + " : ""}${stats.delayDeductDays > 0 ? `${stats.delayDeductDays.toFixed(2)}d late` : ""}` || "no deductions" },
+            ].map(({ label, value, color, sub }) => (
+              <div key={label} className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+                <p className={`mt-2 text-2xl font-semibold ${color}`}>{value}</p>
+                <p className="text-xs text-slate-400">{sub}</p>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
 
       {/* Calendar */}
       {ready && (
@@ -381,6 +394,9 @@ function AttendanceSection() {
                 status === "absent" ? "text-rose-800 dark:text-rose-200" :
                 "text-slate-700 dark:text-slate-300";
 
+              const crmDeductDay = crmDeductions.filter(d => d.date === ds);
+              const crmDays = crmDeductDay.reduce((s, d) => s + d.deductionDays, 0);
+
               return (
                 <div key={dayNum}
                   className={`${bg} rounded-xl border ${isToday ? "border-[#0B4F4B] dark:border-[#8FD4C6]" : "border-[#DCE9E6] dark:border-slate-700"} p-2 min-h-[90px] flex flex-col gap-0.5`}>
@@ -390,6 +406,11 @@ function AttendanceSection() {
                   {delay > 0 && (
                     <span className="mt-0.5 inline-block rounded px-1 py-0.5 text-[10px] font-semibold bg-amber-200 text-amber-900 dark:bg-amber-900 dark:text-amber-100 leading-tight">
                       +{delay}m{deduct > 0 ? ` · ${deductionLabel(deduct)}` : ""}
+                    </span>
+                  )}
+                  {crmDays > 0 && (
+                    <span className="mt-0.5 inline-block rounded px-1 py-0.5 text-[10px] font-semibold bg-red-200 text-red-900 dark:bg-red-900 dark:text-red-100 leading-tight">
+                      CRM −{crmDays}d
                     </span>
                   )}
                   {r.checkIn && (
@@ -417,7 +438,7 @@ function AttendanceSection() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-[#DCE9E6] dark:border-slate-800">
-                {["Employee", "Role", "Present", "Late", "Absent", "Hours"].map(h => (
+                {["Employee", "Role", "Present", "Late", "Absent", "Hours", "Deductions"].map(h => (
                   <th key={h} className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">{h}</th>
                 ))}
               </tr>
@@ -425,16 +446,22 @@ function AttendanceSection() {
             <tbody className="divide-y divide-[#DCE9E6] dark:divide-slate-800">
               {employees.map(emp => {
                 const empRecords = getMonthRecords(viewYear, viewMonth);
+                const empCRMDeductions = deductionsForEmployeeInMonth(emp.id, viewYear, viewMonth);
                 const s = Object.entries(empRecords).reduce((acc, [dayStr, r]) => {
                   const d = parseInt(dayStr, 10);
                   const ds = `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
                   if (new Date(ds) > today) return acc;
                   const isWorkday = !offDays.has(d);
                   const dm = schedule ? delayMinsForRecord(r, schedule) : 0;
-                  if (r.checkIn) { acc.present++; if (dm > 0 && isWorkday) acc.late++; acc.hours += hoursWorked(r); }
-                  else if (isWorkday) acc.absent++;
+                  if (r.checkIn) {
+                    acc.present++;
+                    if (dm > 0 && isWorkday) { acc.late++; acc.delayDeduct += schedule ? deductionForDelay(dm, schedule) : 0; }
+                    acc.hours += hoursWorked(r);
+                  } else if (isWorkday) acc.absent++;
                   return acc;
-                }, { present: 0, late: 0, absent: 0, hours: 0 });
+                }, { present: 0, late: 0, absent: 0, hours: 0, delayDeduct: 0 });
+                const crmDeductTotal = empCRMDeductions.reduce((sum, d) => sum + d.deductionDays, 0);
+                const totalDeduct = +(s.delayDeduct + crmDeductTotal).toFixed(2);
                 const isSelected = emp.name === selectedEmp;
                 return (
                   <tr key={emp.id}
@@ -446,6 +473,7 @@ function AttendanceSection() {
                     <td className="px-5 py-3"><span className={`font-semibold ${s.late > 0 ? "text-amber-600" : "text-slate-400"}`}>{s.late}</span></td>
                     <td className="px-5 py-3"><span className={`font-semibold ${s.absent > 0 ? "text-rose-600" : "text-slate-400"}`}>{s.absent}</span></td>
                     <td className="px-5 py-3 text-slate-700 dark:text-slate-300">{s.hours > 0 ? `${s.hours.toFixed(1)}h` : "—"}</td>
+                    <td className="px-5 py-3"><span className={`font-semibold ${totalDeduct > 0 ? "text-rose-600" : "text-slate-400"}`}>{totalDeduct > 0 ? `−${totalDeduct}d` : "—"}</span></td>
                   </tr>
                 );
               })}

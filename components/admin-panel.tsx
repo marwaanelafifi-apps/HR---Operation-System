@@ -2,13 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { getPosition, isShortMapsLink, loadOffice, parseCoordinates, loadUnlocks, saveOffice, saveUnlocks, type GeoFailure } from "@/lib/office-location";
+import { loadAssessmentLocks, unlockAssessment, loadDailyTasks, onCRMChanged, type AssessmentLock, type KnowledgeTaskData, type DailyTask } from "@/lib/crm-store";
+import { deleteVisit, loadRequests, onRequestsChanged, type VisitRequest } from "@/lib/requests-store";
 import { loadWorkSchedule, saveWorkSchedule, DEFAULT_SCHEDULE, DAY_NAMES_FULL, formatDayHours, type WorkSchedule, type DaySchedule, type DeductionRule, type SaturdayOffRule } from "@/lib/work-schedule";
-import { Check, Clock, Lock, MapPin, Plus, Shield, Trash2, Unlock, X } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Clock, Lock, MapPin, Plus, RefreshCw, Shield, Trash2, Unlock, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { zones as defaultZones, attendanceUnlocks as defaultUnlocks } from "@/lib/mock-data";
 
-type Tab = "office" | "zones" | "attendance" | "schedule" | "permissions";
+type Tab = "office-schedule" | "zones" | "attendance" | "permissions" | "assessment-locks" | "meetings" | "knowledge-submissions";
 
 // Role × Permission matrix
 const ROLES = ["CEO / Owner", "Finance", "Sales Manager", "Broker", "Operations Admin", "Marketeer"];
@@ -33,13 +35,13 @@ const DEFAULT_PERMISSIONS: Record<string, Record<string, boolean>> = {
 };
 
 export function AdminPanel() {
-  const [tab, setTab] = useState<Tab>("office");
+  const [tab, setTab] = useState<Tab>("office-schedule");
 
   return (
     <div>
       {/* Tab bar */}
       <div className="mb-6 flex max-w-full gap-1 overflow-x-auto rounded-2xl border border-[#DCE9E6] bg-white p-1 shadow-sm dark:border-slate-800 dark:bg-slate-900 w-fit">
-        {([["office", "Office location"], ["zones", "Zones"], ["attendance", "Attendance locks"], ["schedule", "Work schedule"], ["permissions", "Role permissions"]] as [Tab, string][]).map(([key, label]) => (
+        {([["office-schedule", "Office & Schedule"], ["zones", "Zones"], ["attendance", "Attendance locks"], ["permissions", "Role permissions"], ["assessment-locks", "Assessment locks"], ["meetings", "Meetings"], ["knowledge-submissions", "Knowledge"]] as [Tab, string][]).map(([key, label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -50,11 +52,341 @@ export function AdminPanel() {
         ))}
       </div>
 
-      {tab === "office" && <OfficeTab />}
+      {tab === "office-schedule" && <OfficeScheduleTab />}
       {tab === "zones" && <ZonesTab />}
       {tab === "attendance" && <AttendanceTab />}
-      {tab === "schedule" && <ScheduleTab />}
       {tab === "permissions" && <PermissionsTab />}
+      {tab === "assessment-locks" && <AssessmentLocksTab />}
+      {tab === "meetings" && <MeetingsTab />}
+      {tab === "knowledge-submissions" && <KnowledgeSubmissionsTab />}
+    </div>
+  );
+}
+
+/* ── Office & Schedule (merged) ── */
+function OfficeScheduleTab() {
+  return (
+    <div className="space-y-10">
+      <OfficeTab />
+      <div className="border-t border-[#DCE9E6] dark:border-slate-800" />
+      <ScheduleTab />
+    </div>
+  );
+}
+
+/* ── Assessment Locks ── */
+function AssessmentLocksTab() {
+  const [locks, setLocks] = useState<AssessmentLock[]>([]);
+
+  function refresh() { setLocks(loadAssessmentLocks()); }
+
+  useEffect(() => { refresh(); }, []);
+
+  function handleUnlock(lock: AssessmentLock) {
+    unlockAssessment(lock.employeeId, lock.taskId, lock.date);
+    refresh();
+  }
+
+  function formatLockedAt(iso: string | undefined) {
+    if (!iso) return "Unknown time";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "Unknown time";
+    return d.toLocaleTimeString("en", { hour: "numeric", minute: "2-digit", hour12: true });
+  }
+
+  function formatDate(iso: string) {
+    const d = new Date(`${iso}T00:00`);
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleDateString("en", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+  }
+
+  const sorted = [...locks].sort((a, b) => (b.lockedAt ?? "").localeCompare(a.lockedAt ?? ""));
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-base font-semibold text-slate-900 dark:text-white">Locked Assessments</h2>
+          <p className="mt-1 text-sm text-slate-500">Users whose priority assessment was locked because they switched apps or tabs mid-task. Unlock to allow them to retry.</p>
+        </div>
+        <button onClick={refresh} className="flex shrink-0 items-center gap-1.5 rounded-xl border border-[#DCE9E6] px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-[#0B4F4B] hover:text-[#0B4F4B] dark:border-slate-700 dark:text-slate-300">
+          <RefreshCw className="h-3 w-3" /> Refresh
+        </button>
+      </div>
+
+      {sorted.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-[#DCE9E6] py-10 text-center dark:border-slate-700">
+          <Lock className="mx-auto mb-3 h-8 w-8 text-slate-300 dark:text-slate-600" />
+          <p className="text-sm font-medium text-slate-500">No locked assessments</p>
+          <p className="mt-1 text-xs text-slate-400">All users are free to submit their assessments.</p>
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-2xl border border-[#DCE9E6] dark:border-slate-800">
+          {sorted.map((lock, idx) => (
+            <div key={`${lock.employeeId}-${lock.taskId}-${lock.date}`}
+              className={`flex items-center gap-4 px-5 py-4 ${idx < sorted.length - 1 ? "border-b border-[#DCE9E6] dark:border-slate-800" : ""}`}>
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-rose-100 dark:bg-rose-950">
+                <Lock className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                  {lock.employeeName || lock.employeeId}
+                </p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {lock.taskLabel || lock.taskId} · {formatDate(lock.date)}
+                </p>
+                <p className="text-xs text-rose-500">
+                  Left screen at {formatLockedAt(lock.lockedAt)}
+                </p>
+              </div>
+              <button
+                onClick={() => handleUnlock(lock)}
+                className="flex shrink-0 items-center gap-1.5 rounded-xl border border-[#DCE9E6] bg-white px-3 py-1.5 text-xs font-semibold text-[#0B4F4B] transition hover:border-[#0B4F4B] hover:bg-[#E8F3F1] dark:border-slate-700 dark:bg-slate-900 dark:text-[#8FD4C6] dark:hover:border-[#2E7D76] dark:hover:bg-[#0B2927]"
+              >
+                <Unlock className="h-3 w-3" /> Unlock
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Meetings ── */
+/* ── Knowledge Submissions ── */
+function KnowledgeSubmissionsTab() {
+  const [tasks, setTasks] = useState<DailyTask[]>([]);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [filterEmp, setFilterEmp] = useState("all");
+  const [filterDate, setFilterDate] = useState("");
+
+  function refresh() {
+    setTasks(loadDailyTasks().filter(t => t.taskType === "knowledge").sort((a, b) => b.completedAt.localeCompare(a.completedAt)));
+  }
+
+  useEffect(() => {
+    refresh();
+    return onCRMChanged(refresh);
+  }, []);
+
+  function fmtDate(iso: string) {
+    const d = new Date(`${iso}T00:00`);
+    return isNaN(d.getTime()) ? iso : d.toLocaleDateString("en", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+  }
+
+  function fmtTime(iso: string) {
+    return new Date(iso).toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit" });
+  }
+
+  const empNames = Array.from(new Set(tasks.map(t => t.employeeName))).sort();
+  const filtered = tasks.filter(t => {
+    if (filterEmp !== "all" && t.employeeName !== filterEmp) return false;
+    if (filterDate && t.date !== filterDate) return false;
+    return true;
+  });
+
+  const FIELD_LABELS: [keyof import("@/lib/crm-store").ProjectAssessment, string][] = [
+    ["projectName", "Project Name"],
+    ["companyName", "Company Name"],
+    ["previousWork", "Previous Projects / Owner History"],
+    ["location", "Location"],
+    ["projectArea", "Project Acres"],
+    ["projectDetails", "Project Details & Facilities"],
+    ["unitTypes", "Unit Types"],
+    ["pricesAndAcres", "Prices & Acres"],
+    ["paymentPlan", "Payment Plan"],
+    ["finishingType", "Finishing Type"],
+    ["construction", "Construction"],
+    ["deliveryDate", "Delivery Date"],
+    ["maintenance", "Maintenance"],
+    ["investorType", "Engineering Consultant"],
+    ["managementAndOperations", "Management & Operations"],
+    ["termsOfContract", "Terms of Operating Contract"],
+    ["sellingPoints", "Selling Points"],
+    ["weaknessPoints", "Weakness Points"],
+    ["additionalNotes", "Additional Notes"],
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold text-slate-900 dark:text-white">Projects in Market — All Submissions</h2>
+          <p className="mt-1 text-sm text-slate-500">{filtered.length} submission{filtered.length !== 1 ? "s" : ""} across all employees.</p>
+        </div>
+        <button onClick={refresh} className="flex shrink-0 items-center gap-1.5 rounded-xl border border-[#DCE9E6] px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-[#0B4F4B] hover:text-[#0B4F4B] dark:border-slate-700 dark:text-slate-300">
+          <RefreshCw className="h-3 w-3" /> Refresh
+        </button>
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap gap-3">
+        <select
+          value={filterEmp}
+          onChange={e => setFilterEmp(e.target.value)}
+          className="rounded-xl border border-[#DCE9E6] bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+        >
+          <option value="all">All employees</option>
+          {empNames.map(n => <option key={n} value={n}>{n}</option>)}
+        </select>
+        <input
+          type="date"
+          value={filterDate}
+          onChange={e => setFilterDate(e.target.value)}
+          className="rounded-xl border border-[#DCE9E6] bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+        />
+        {filterDate && (
+          <button onClick={() => setFilterDate("")} className="rounded-xl border border-[#DCE9E6] px-3 py-2 text-xs font-semibold text-slate-500 hover:text-[#0B4F4B] dark:border-slate-700">
+            Clear date
+          </button>
+        )}
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-[#DCE9E6] py-10 text-center dark:border-slate-700">
+          <p className="text-sm font-medium text-slate-500">No submissions found</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filtered.map(task => {
+            const kd = task.data as KnowledgeTaskData;
+            const isOpen = expandedId === task.id;
+            const isVoice = !!kd.voiceNoteTranscript;
+            const rows = isVoice ? [] : FIELD_LABELS
+              .map(([k, label]) => [label, kd.assessment?.[k]] as [string, string])
+              .filter(([, v]) => v);
+
+            return (
+              <div key={task.id} className="overflow-hidden rounded-2xl border border-[#DCE9E6] bg-white dark:border-slate-700 dark:bg-slate-900">
+                <button
+                  onClick={() => setExpandedId(isOpen ? null : task.id)}
+                  className="flex w-full items-center gap-3 px-5 py-4 text-left hover:bg-[#F5F8F7] dark:hover:bg-slate-800/50"
+                >
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-950">
+                    <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-semibold text-slate-900 dark:text-white">
+                      {isVoice ? "Voice note" : (kd.assessment?.projectName || "—")}
+                      {!isVoice && kd.assessment?.companyName && (
+                        <span className="ml-2 font-normal text-slate-500">· {kd.assessment.companyName}</span>
+                      )}
+                    </p>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-3 text-xs text-slate-400">
+                      <span>{task.employeeName}</span>
+                      <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{fmtDate(task.date)} · {fmtTime(task.completedAt)}</span>
+                      {isVoice && <span className="rounded-full bg-blue-100 px-2 py-0.5 font-semibold text-blue-600 dark:bg-blue-950 dark:text-blue-300">Voice</span>}
+                    </div>
+                  </div>
+                  {isOpen ? <ChevronUp className="h-4 w-4 shrink-0 text-slate-400" /> : <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />}
+                </button>
+
+                {isOpen && (
+                  <div className="border-t border-[#DCE9E6] px-5 py-4 dark:border-slate-700">
+                    {isVoice ? (
+                      <div>
+                        <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                          Voice note · {kd.voiceNoteLanguage === "ar" ? "Arabic" : "English"}
+                        </p>
+                        <p className="leading-6 text-slate-700 dark:text-slate-200" dir={kd.voiceNoteLanguage === "ar" ? "rtl" : "ltr"}>
+                          {kd.voiceNoteTranscript}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="grid gap-x-8 gap-y-2 text-sm sm:grid-cols-2">
+                        {rows.map(([label, value]) => (
+                          <div key={label} className="flex gap-2">
+                            <span className="shrink-0 font-semibold text-slate-500">{label}:</span>
+                            <span className="text-slate-700 dark:text-slate-200">{value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MeetingsTab() {
+  const [visits, setVisits] = useState<VisitRequest[]>([]);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+
+  function refresh() { setVisits(loadRequests().visits); }
+
+  useEffect(() => {
+    refresh();
+    return onRequestsChanged(refresh);
+  }, []);
+
+  function handleDelete(id: string) {
+    deleteVisit(id);
+    setConfirmId(null);
+  }
+
+  function fmtDate(iso: string) {
+    const d = new Date(`${iso}T00:00`);
+    return isNaN(d.getTime()) ? iso : d.toLocaleDateString("en", { weekday: "short", month: "short", day: "numeric" });
+  }
+
+  const sorted = [...visits].sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-base font-semibold text-slate-900 dark:text-white">All Meetings</h2>
+          <p className="mt-1 text-sm text-slate-500">View and delete submitted meeting records across all employees.</p>
+        </div>
+        <button onClick={refresh} className="flex shrink-0 items-center gap-1.5 rounded-xl border border-[#DCE9E6] px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-[#0B4F4B] hover:text-[#0B4F4B] dark:border-slate-700 dark:text-slate-300">
+          <RefreshCw className="h-3 w-3" /> Refresh
+        </button>
+      </div>
+
+      {sorted.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-[#DCE9E6] py-10 text-center dark:border-slate-700">
+          <p className="text-sm font-medium text-slate-500">No meetings recorded yet</p>
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-2xl border border-[#DCE9E6] dark:border-slate-800">
+          {sorted.map((v, idx) => (
+            <div key={v.id}
+              className={`flex items-start gap-4 px-5 py-4 ${idx < sorted.length - 1 ? "border-b border-[#DCE9E6] dark:border-slate-800" : ""}`}>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-sm font-semibold text-slate-900 dark:text-white">{v.clientName}</p>
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${v.status === "approved" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : v.status === "rejected" ? "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300" : "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"}`}>
+                    {v.status === "approved" ? "Approved" : v.status === "rejected" ? "Rejected" : "Pending"}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500">{v.projectName}{v.meetingLocation ? ` · ${v.meetingLocation}` : ""}</p>
+                <p className="mt-0.5 text-xs text-slate-400">{v.employeeName} · {fmtDate(v.date ?? "")} {v.time ? `· ${v.time}` : ""}</p>
+                {v.notes && <p className="mt-1 text-xs text-slate-400 italic">{v.notes}</p>}
+              </div>
+              {confirmId === v.id ? (
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="text-xs text-slate-500">Delete?</span>
+                  <button onClick={() => handleDelete(v.id)} className="rounded-lg bg-rose-500 px-2.5 py-1 text-xs font-semibold text-white hover:bg-rose-600">Yes</button>
+                  <button onClick={() => setConfirmId(null)} className="rounded-lg border border-[#DCE9E6] px-2.5 py-1 text-xs font-semibold text-slate-600 hover:border-slate-400 dark:border-slate-700 dark:text-slate-300">No</button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmId(v.id)}
+                  className="shrink-0 rounded-xl border border-[#DCE9E6] p-1.5 text-slate-400 transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-500 dark:border-slate-700 dark:hover:border-rose-700 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

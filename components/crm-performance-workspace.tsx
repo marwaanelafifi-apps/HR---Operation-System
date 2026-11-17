@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle, Calendar, Check, ChevronLeft, ChevronRight,
   Plus, Trash2, Users, X,
@@ -9,10 +9,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   addExtraTask, deleteExtraTask, getDayPerformance,
-  loadCRMDeductions, loadExtraTasks, onCRMChanged,
-  taskForEmployeeOnDate, DAILY_REQUESTS_TARGET,
-  type CallsTaskData, type RotationTaskData,
+  getCustomTaskCompletion, loadCRMDeductions, loadExtraTasks, onCRMChanged,
+  taskForEmployeeOnDate,
+  type AdsTaskData, type KnowledgeTaskData, type CallsTaskData, type RotationTaskData, type DailyTask,
 } from "@/lib/crm-store";
+import { customTaskAppliesToDate, loadCRMTaskConfig } from "@/lib/crm-task-config";
 import { loadRequests } from "@/lib/requests-store";
 import { employees } from "@/lib/mock-data";
 
@@ -22,7 +23,11 @@ const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "Ju
 function todayISO() { return new Date().toISOString().slice(0, 10); }
 
 function countMeetingsForEmployee(employeeName: string, date: string): number {
-  return loadRequests().visits.filter(v => v.employeeName === employeeName && v.date === date).length;
+  return loadRequests().visits.filter(v =>
+    v.employeeName === employeeName &&
+    v.date === date &&
+    (v.createdDate ?? v.date) === date
+  ).length;
 }
 
 function daysInMonth(year: number, month: number) {
@@ -35,6 +40,14 @@ function isoDate(year: number, month: number, day: number) {
 
 function friendlyDate(iso: string) {
   return new Date(`${iso}T00:00`).toLocaleDateString("en", { weekday: "short", month: "short", day: "numeric" });
+}
+
+function fmtDuration(seconds?: number): string | null {
+  if (!seconds || seconds <= 0) return null;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  if (m === 0) return `${s}s`;
+  return s === 0 ? `${m}m` : `${m}m ${s}s`;
 }
 
 function isWeekend(year: number, month: number, day: number) {
@@ -50,27 +63,52 @@ const SALES_EMPLOYEES = employees.filter(e => e.department === "Sales");
 
 // ── Day performance card ──────────────────────────────────────────────────────
 function DayPerfCard({ emp, date, onAssignTask }: { emp: typeof SALES_EMPLOYEES[0]; date: string; onAssignTask: () => void }) {
-  const perf = getDayPerformance(emp.id, date, (d) => countMeetingsForEmployee(emp.name, d));
+  const cfg = loadCRMTaskConfig();
+  const perf = getDayPerformance(emp.id, date, (d) => countMeetingsForEmployee(emp.name, d), cfg.requestsTarget, cfg.meetingsTarget, cfg.knowledgeTarget);
 
-  const callsTask = taskForEmployeeOnDate(emp.id, date, "calls");
+  const adsTask = taskForEmployeeOnDate(emp.id, date, "ads") as (DailyTask & { durationSeconds?: number }) | undefined;
+  const adsData = adsTask?.data as AdsTaskData | undefined;
+
+  const knowledgeTask = taskForEmployeeOnDate(emp.id, date, "knowledge") as (DailyTask & { durationSeconds?: number }) | undefined;
+  const knowledgeData = knowledgeTask?.data as KnowledgeTaskData | undefined;
+
+  const callsTask = taskForEmployeeOnDate(emp.id, date, "calls") as (DailyTask & { durationSeconds?: number }) | undefined;
   const callsData = callsTask?.data as CallsTaskData | undefined;
 
-  const rotationTask = taskForEmployeeOnDate(emp.id, date, "rotation");
+  const rotationTask = taskForEmployeeOnDate(emp.id, date, "rotation") as (DailyTask & { durationSeconds?: number }) | undefined;
   const rotData = rotationTask?.data as RotationTaskData | undefined;
+
+  // Custom task completions for this employee/date
+  const customTasks = loadCRMTaskConfig().customTasks.filter(ct => customTaskAppliesToDate(ct, date));
+  const customCompletions = customTasks.map(ct => ({ task: ct, completion: getCustomTaskCompletion(emp.id, ct.id, date) }));
 
   const extraTasks = perf.extraTasks;
   const deductions = perf.deductions;
 
-  function TaskRow({ label, done, detail }: { label: string; done: boolean; detail?: string }) {
+  function TaskRow({ label, done, duration, children }: { label: string; done: boolean; duration?: number; children?: React.ReactNode }) {
+    const [open, setOpen] = useState(false);
+    const hasDetail = !!children;
+    const durationLabel = done ? fmtDuration(duration) : null;
     return (
-      <div className="flex items-start gap-2.5 py-1.5">
-        <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] ${done ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : "bg-slate-100 text-slate-400 dark:bg-slate-800"}`}>
-          {done ? <Check className="h-2.5 w-2.5" /> : "–"}
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className={`text-sm ${done ? "text-slate-700 dark:text-slate-200" : "text-slate-400"}`}>{label}</p>
-          {detail && <p className="text-xs text-slate-400">{detail}</p>}
-        </div>
+      <div className="border-b border-[#DCE9E6] last:border-0 dark:border-slate-700">
+        <button
+          onClick={() => { if (hasDetail) setOpen(o => !o); }}
+          className={`flex w-full items-center gap-2.5 py-2.5 text-left ${hasDetail ? "cursor-pointer hover:bg-[#F5F8F7] dark:hover:bg-slate-800" : "cursor-default"} rounded-lg px-1`}
+        >
+          <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] ${done ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : "bg-slate-100 text-slate-400 dark:bg-slate-800"}`}>
+            {done ? <Check className="h-3 w-3" /> : "–"}
+          </span>
+          <span className={`flex-1 text-sm font-medium ${done ? "text-slate-800 dark:text-slate-100" : "text-slate-400"}`}>{label}</span>
+          {durationLabel && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400">{durationLabel}</span>}
+          {hasDetail && done && (
+            <span className="text-xs text-slate-400">{open ? "▲" : "▼"}</span>
+          )}
+        </button>
+        {open && hasDetail && (
+          <div className="mb-2 ml-7 rounded-xl border border-[#DCE9E6] bg-[#F5F8F7] p-3 text-xs dark:border-slate-700 dark:bg-slate-800">
+            {children}
+          </div>
+        )}
       </div>
     );
   }
@@ -90,32 +128,104 @@ function DayPerfCard({ emp, date, onAssignTask }: { emp: typeof SALES_EMPLOYEES[
       <div className="mb-4 grid grid-cols-2 gap-3">
         <div className="rounded-xl border border-[#DCE9E6] bg-[#F5F8F7] p-3 dark:border-slate-700 dark:bg-slate-800">
           <p className="text-xs text-slate-400">Requests</p>
-          <p className="text-xl font-semibold text-slate-900 dark:text-white">{perf.requestsCount}<span className="text-sm font-normal text-slate-400">/{DAILY_REQUESTS_TARGET}</span></p>
-          <Badge tone={perf.requestsCount >= DAILY_REQUESTS_TARGET ? "success" : perf.requestsCount > 0 ? "warning" : "default"} className="mt-1">
-            {perf.requestsCount >= DAILY_REQUESTS_TARGET ? "On target" : perf.requestsCount > 0 ? "Partial" : "None"}
+          <p className="text-xl font-semibold text-slate-900 dark:text-white">{perf.requestsCount}<span className="text-sm font-normal text-slate-400">/{perf.requestsTarget}</span></p>
+          <Badge tone={perf.requestsCount >= perf.requestsTarget ? "success" : perf.requestsCount > 0 ? "warning" : "default"} className="mt-1">
+            {perf.requestsCount >= perf.requestsTarget ? "On target" : perf.requestsCount > 0 ? "Partial" : "None"}
           </Badge>
         </div>
         <div className="rounded-xl border border-[#DCE9E6] bg-[#F5F8F7] p-3 dark:border-slate-700 dark:bg-slate-800">
-          <p className="text-xs text-slate-400">Meeting</p>
-          <p className="text-xl font-semibold text-slate-900 dark:text-white">{perf.meetingsDone ? "Yes" : "No"}</p>
-          <Badge tone={perf.meetingsDone ? "success" : "default"} className="mt-1">{perf.meetingsDone ? "Done" : "Missing"}</Badge>
+          <p className="text-xs text-slate-400">Meetings</p>
+          <p className="text-xl font-semibold text-slate-900 dark:text-white">
+            {countMeetingsForEmployee(emp.name, date)}
+          </p>
+          <Badge tone={perf.meetingsDone ? "success" : "default"} className="mt-1">
+            {perf.meetingsDone ? "Done" : "None"}
+          </Badge>
         </div>
       </div>
 
       <div className="border-t border-[#DCE9E6] pt-3 dark:border-slate-700">
         <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Tasks</p>
-        <TaskRow label="Ads & WhatsApp Campaign" done={perf.adsTaskDone} />
-        <TaskRow label="Knowledge" done={perf.knowledgeTaskDone} />
-        <TaskRow
-          label="Calls"
-          done={perf.callsTaskDone}
-          detail={callsData ? `Fresh ${callsData.freshCalls} · Old ${callsData.oldCalls} · Delay ${callsData.delayCalls}` : undefined}
-        />
-        <TaskRow
-          label="Rotation"
-          done={perf.rotationTaskDone}
-          detail={rotData?.rotatedWithNames.join(", ")}
-        />
+        <TaskRow label="Ads & WhatsApp Campaign" done={perf.adsTaskDone} duration={adsTask?.durationSeconds}>
+          {adsData && (
+            <div className="space-y-1.5">
+              {adsData.urls.map((url, i) => (
+                <div key={i} className="flex items-start gap-2">
+                  <span className="mt-0.5 shrink-0 font-semibold text-[#0B4F4B] dark:text-[#8FD4C6]">{i + 1}.</span>
+                  <div className="min-w-0">
+                    <span className="font-medium text-slate-500">{adsData.platform[i] ?? "Link"} — </span>
+                    <a href={url} target="_blank" rel="noreferrer" className="break-all text-[#0B4F4B] underline dark:text-[#8FD4C6]">{url}</a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </TaskRow>
+        <TaskRow label={`Projects in Market${perf.knowledgeTarget > 1 ? ` (${perf.knowledgeCount}/${perf.knowledgeTarget})` : ""}`} done={perf.knowledgeTaskDone} duration={knowledgeTask?.durationSeconds}>
+          {knowledgeData && (
+            knowledgeData.voiceNoteTranscript ? (
+              <div>
+                <p className="mb-1 font-semibold text-slate-500">Voice note ({knowledgeData.voiceNoteLanguage === "ar" ? "Arabic" : "English"})</p>
+                <p className={`leading-6 text-slate-700 dark:text-slate-200 ${knowledgeData.voiceNoteLanguage === "ar" ? "text-right" : ""}`} dir={knowledgeData.voiceNoteLanguage === "ar" ? "rtl" : "ltr"}>
+                  {knowledgeData.voiceNoteTranscript}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {([
+                  ["Company", knowledgeData.assessment.companyName],
+                  ["Project", knowledgeData.assessment.projectName],
+                  ["Location", knowledgeData.assessment.location],
+                  ["Management & Ops", knowledgeData.assessment.managementAndOperations],
+                  ["Owner", knowledgeData.assessment.owner],
+                  ["Consultant", knowledgeData.assessment.investorType],
+                  ["Previous Projects", knowledgeData.assessment.previousWork],
+                  ["Area", knowledgeData.assessment.projectArea],
+                  ["Finishing", knowledgeData.assessment.finishingType],
+                  ["Details", knowledgeData.assessment.projectDetails],
+                  ["Units, Areas & Prices", knowledgeData.assessment.unitTypes],
+                  ["Maintenance", knowledgeData.assessment.maintenance],
+                  ["Delivery", knowledgeData.assessment.deliveryDate],
+                ] as [string, string][]).filter(([, v]) => v).map(([k, v]) => (
+                  <div key={k} className="flex gap-2">
+                    <span className="shrink-0 font-semibold text-slate-500">{k}:</span>
+                    <span className="text-slate-700 dark:text-slate-200">{v}</span>
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+        </TaskRow>
+        <TaskRow label="Calls" done={perf.callsTaskDone} duration={callsTask?.durationSeconds}>
+          {callsData && (
+            <div className="flex gap-6">
+              <div><span className="font-semibold text-emerald-600">{callsData.freshCalls}</span><span className="ml-1 text-slate-500">Fresh</span></div>
+              <div><span className="font-semibold text-sky-600">{callsData.oldCalls}</span><span className="ml-1 text-slate-500">Old</span></div>
+              <div><span className="font-semibold text-amber-600">{callsData.delayCalls}</span><span className="ml-1 text-slate-500">Delay</span></div>
+              <div className="ml-auto"><span className="font-semibold text-slate-700 dark:text-slate-200">{callsData.freshCalls + callsData.oldCalls + callsData.delayCalls}</span><span className="ml-1 text-slate-500">Total</span></div>
+            </div>
+          )}
+        </TaskRow>
+        <TaskRow label="Rotation" done={perf.rotationTaskDone} duration={rotationTask?.durationSeconds}>
+          {rotData && (
+            <div className="space-y-1">
+              {rotData.rotatedWithNames.length > 0 && (
+                <p><span className="font-semibold text-slate-500">Rotated with: </span>{rotData.rotatedWithNames.join(", ")}</p>
+              )}
+              {rotData.notes && <p><span className="font-semibold text-slate-500">Notes: </span>{rotData.notes}</p>}
+            </div>
+          )}
+        </TaskRow>
+        {customCompletions.map(({ task: ct, completion }) => (
+          <TaskRow key={ct.id} label={ct.labelEn} done={!!completion} duration={completion?.durationSeconds}>
+            {completion && (
+              <div className="space-y-1">
+                {completion.wasBlocked && <p className="font-semibold text-rose-500">⚠ Assessment was locked</p>}
+                {completion.note && <p className="text-slate-700 dark:text-slate-200">{completion.note}</p>}
+              </div>
+            )}
+          </TaskRow>
+        ))}
       </div>
 
       {extraTasks.length > 0 && (
@@ -149,6 +259,7 @@ function MonthView({ emp, year, month }: { emp: typeof SALES_EMPLOYEES[0]; year:
   const today = todayISO();
   const dim = daysInMonth(year, month);
   const firstDow = new Date(year, month, 1).getDay();
+  const cfg = loadCRMTaskConfig();
 
   // Collect per-day performance for the whole month
   const perfByDay = useMemo(() => {
@@ -157,9 +268,10 @@ function MonthView({ emp, year, month }: { emp: typeof SALES_EMPLOYEES[0]; year:
       const date = isoDate(year, month, d);
       if (date > today) continue;
       if (isWeekend(year, month, d)) continue;
-      result[d] = getDayPerformance(emp.id, date, (dt) => countMeetingsForEmployee(emp.name, dt));
+      result[d] = getDayPerformance(emp.id, date, (dt) => countMeetingsForEmployee(emp.name, dt), cfg.requestsTarget, cfg.meetingsTarget, cfg.knowledgeTarget);
     }
     return result;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [emp, year, month, dim, today]);
 
   // Monthly summary
@@ -167,7 +279,7 @@ function MonthView({ emp, year, month }: { emp: typeof SALES_EMPLOYEES[0]; year:
     const days = Object.values(perfByDay);
     const workdays = days.length;
     const reqTotal = days.reduce((s, d) => s + d.requestsCount, 0);
-    const reqTarget = workdays * DAILY_REQUESTS_TARGET;
+    const reqTarget = workdays * cfg.requestsTarget;
     const meetingsDone = days.filter(d => d.meetingsDone).length;
     const tasksDone = days.reduce((s, d) => {
       let n = 0;
@@ -189,7 +301,7 @@ function MonthView({ emp, year, month }: { emp: typeof SALES_EMPLOYEES[0]; year:
     if (date > today) return "bg-white dark:bg-slate-900";
     const perf = perfByDay[d];
     if (!perf) return "bg-white dark:bg-slate-900";
-    const score = [perf.requestsCount >= DAILY_REQUESTS_TARGET, perf.meetingsDone, perf.adsTaskDone, perf.knowledgeTaskDone, perf.callsTaskDone, perf.rotationTaskDone].filter(Boolean).length;
+    const score = [perf.requestsCount >= perf.requestsTarget, perf.meetingsDone, perf.adsTaskDone, perf.knowledgeTaskDone, perf.callsTaskDone, perf.rotationTaskDone].filter(Boolean).length;
     if (score >= 5) return "bg-emerald-50 dark:bg-emerald-950/40";
     if (score >= 3) return "bg-amber-50 dark:bg-amber-950/30";
     return "bg-rose-50 dark:bg-rose-950/30";
@@ -233,21 +345,35 @@ function MonthView({ emp, year, month }: { emp: typeof SALES_EMPLOYEES[0]; year:
             const isFuture = date > today;
             const weekend = isWeekend(year, month, d);
             const perf = perfByDay[d];
-            const hasDeduction = perf?.deductions.length ?? 0 > 0;
+            const hasDeduction = (perf?.deductions.length ?? 0) > 0;
 
             return (
-              <div key={d} className={`relative min-h-[72px] border-b border-r border-[#DCE9E6] p-2 dark:border-slate-700 last:border-r-0 ${cellColor(d)}`}>
+              <div key={d} className={`relative min-h-[80px] border-b border-r border-[#DCE9E6] p-2 dark:border-slate-700 last:border-r-0 ${cellColor(d)}`}>
                 <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold ${isToday ? "bg-[#0B4F4B] text-white" : weekend ? "text-slate-300 dark:text-slate-600" : "text-slate-700 dark:text-slate-200"}`}>{d}</span>
                 {!weekend && !isFuture && perf && (
-                  <div className="mt-1 flex flex-wrap gap-0.5">
-                    {perf.requestsCount >= DAILY_REQUESTS_TARGET && <span title="Requests" className="h-1.5 w-1.5 rounded-full bg-emerald-500" />}
-                    {perf.meetingsDone && <span title="Meeting" className="h-1.5 w-1.5 rounded-full bg-blue-500" />}
-                    {perf.adsTaskDone && <span title="Ads" className="h-1.5 w-1.5 rounded-full bg-purple-500" />}
-                    {perf.knowledgeTaskDone && <span title="Knowledge" className="h-1.5 w-1.5 rounded-full bg-amber-500" />}
-                    {perf.callsTaskDone && <span title="Calls" className="h-1.5 w-1.5 rounded-full bg-sky-500" />}
-                    {perf.rotationTaskDone && <span title="Rotation" className="h-1.5 w-1.5 rounded-full bg-teal-500" />}
-                    {hasDeduction && <span title="Deduction" className="h-1.5 w-1.5 rounded-full bg-rose-500" />}
-                  </div>
+                  <>
+                    <div className="mt-1 space-y-0.5">
+                      <div className="flex items-center gap-1">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                        <span className={`text-[10px] font-semibold leading-none ${perf.requestsCount >= perf.requestsTarget ? "text-emerald-700 dark:text-emerald-400" : perf.requestsCount > 0 ? "text-amber-600 dark:text-amber-400" : "text-slate-400"}`}>
+                          {perf.requestsCount}/{perf.requestsTarget}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+                        <span className={`text-[10px] font-semibold leading-none ${perf.meetingsDone ? "text-blue-700 dark:text-blue-400" : perf.meetingsCount > 0 ? "text-amber-600 dark:text-amber-400" : "text-slate-400"}`}>
+                          {perf.meetingsCount}/1
+                        </span>
+                      </div>
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-0.5">
+                      {perf.adsTaskDone && <span title="Ads" className="h-1.5 w-1.5 rounded-full bg-purple-500" />}
+                      {perf.knowledgeTaskDone && <span title="Knowledge" className="h-1.5 w-1.5 rounded-full bg-amber-500" />}
+                      {perf.callsTaskDone && <span title="Calls" className="h-1.5 w-1.5 rounded-full bg-sky-500" />}
+                      {perf.rotationTaskDone && <span title="Rotation" className="h-1.5 w-1.5 rounded-full bg-teal-500" />}
+                      {hasDeduction && <span title="Deduction" className="h-1.5 w-1.5 rounded-full bg-rose-500" />}
+                    </div>
+                  </>
                 )}
               </div>
             );
@@ -258,8 +384,8 @@ function MonthView({ emp, year, month }: { emp: typeof SALES_EMPLOYEES[0]; year:
       {/* Legend */}
       <div className="flex flex-wrap gap-4 text-xs text-slate-500">
         {[
-          { color: "bg-emerald-500", label: "Requests ✓" },
-          { color: "bg-blue-500", label: "Meeting ✓" },
+          { color: "bg-emerald-500", label: "Requests (count/target)" },
+          { color: "bg-blue-500", label: "Meetings (count)" },
           { color: "bg-purple-500", label: "Ads ✓" },
           { color: "bg-amber-500", label: "Knowledge ✓" },
           { color: "bg-sky-500", label: "Calls ✓" },
@@ -318,7 +444,7 @@ function ExtraTasksList({ emp, monthPrefix }: { emp: typeof SALES_EMPLOYEES[0]; 
 function AssignTaskModal({ emp, defaultDate, onClose }: { emp: typeof SALES_EMPLOYEES[0]; defaultDate: string; onClose: () => void }) {
   const [date, setDate] = useState(defaultDate);
   const [note, setNote] = useState("");
-  const [deduction, setDeduction] = useState<0 | 0.5 | 1>(0);
+  const [deduction, setDeduction] = useState<0 | 0.25 | 0.5 | 1>(0);
   const [submitting, setSubmitting] = useState(false);
 
   function handleSubmit() {
@@ -356,10 +482,10 @@ function AssignTaskModal({ emp, defaultDate, onClose }: { emp: typeof SALES_EMPL
           <div>
             <label className={labelCls}>Deduction</label>
             <div className="flex gap-2">
-              {([0, 0.5, 1] as const).map(d => (
+              {([0, 0.25, 0.5, 1] as const).map(d => (
                 <label key={d} className={`flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-xl border p-3 text-sm font-semibold transition ${deduction === d ? "border-[#0B4F4B] bg-[#E8F3F1] text-[#0B4F4B] dark:border-[#2E7D76] dark:bg-[#0B2927] dark:text-[#8FD4C6]" : "border-[#DCE9E6] text-slate-500 hover:border-[#B7D9D3] dark:border-slate-700"}`}>
                   <input type="radio" name="deduction" value={d} checked={deduction === d} onChange={() => setDeduction(d)} className="sr-only" />
-                  {d === 0 ? "None" : `${d} day`}
+                  {d === 0 ? "None" : d === 0.25 ? "¼ day" : `${d} day`}
                 </label>
               ))}
             </div>

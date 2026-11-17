@@ -19,6 +19,7 @@ export type VisitRequest = {
   notes: string;
   status: Status;
   submittedAt: string;
+  createdDate?: string;  // ISO YYYY-MM-DD the request was submitted (set on new requests)
   decidedAt?: string;
   decisionNote?: string;
   // Set by approver: which attendance action uses the meeting zone instead of the office
@@ -93,7 +94,7 @@ export const nowLabel = () => new Intl.DateTimeFormat("en", { dateStyle: "medium
 
 export function addVisit(visit: Omit<VisitRequest, "id" | "status" | "submittedAt">) {
   const store = loadRequests();
-  save({ ...store, visits: [{ ...visit, id: `omr-${Date.now()}`, status: "pending", submittedAt: nowLabel() }, ...store.visits] });
+  save({ ...store, visits: [{ ...visit, id: `omr-${Date.now()}`, status: "pending", submittedAt: nowLabel(), createdDate: new Date().toISOString().slice(0, 10) }, ...store.visits] });
 }
 
 export function addExcuse(excuse: Omit<ExcuseRequest, "id" | "status" | "submittedAt"> & { hoursUsed?: number }) {
@@ -118,6 +119,12 @@ export function decide(
   save(kind === "visit"
     ? { ...store, visits: store.visits.map((r) => (r.id === id ? { ...r, ...patch } : r)) }
     : { ...store, excuses: store.excuses.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
+}
+
+/** Admin: permanently delete a visit record. */
+export function deleteVisit(id: string) {
+  const store = loadRequests();
+  save({ ...store, visits: store.visits.filter(v => v.id !== id) });
 }
 
 /** Close an approved site visit with mandatory outcome notes, transportation cost, and receipts. */

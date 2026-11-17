@@ -3,18 +3,25 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
-  Check, ChevronRight, Mic, MicOff, Phone, Plus, X,
+  AlertTriangle, Check, ChevronRight, ExternalLink, Lock, Mic, MicOff, Paperclip, Phone, Plus, X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { addVisit, loadRequests, onRequestsChanged, type VisitRequest } from "@/lib/requests-store";
 import {
-  addDailyTask, addCRMRequest, detectSocialPlatform, isValidSocialUrl,
-  onCRMChanged, requestsForEmployeeOnDate, taskForEmployeeOnDate,
-  DAILY_REQUESTS_TARGET, LEAD_SOURCES,
+  addDailyTask, addCRMRequest, addCustomTaskCompletion, detectSocialPlatform,
+  getCustomTaskCompletion, isAssessmentBlocked, isValidSocialUrl,
+  markAssessmentBlocked, onCRMChanged, requestsForEmployeeOnDate,
+  taskForEmployeeOnDate, tasksCountForEmployeeOnDate,
+  extraTasksForEmployee, acknowledgeExtraTask,
+  LEAD_SOURCE_GROUPS,
   type AdsTaskData, type CallsTaskData, type CRMRequest, type DailyTask,
-  type KnowledgeTaskData, type ProjectAssessment, type RotationTaskData,
+  type ExtraTask, type KnowledgeTaskData, type ProjectAssessment, type RotationTaskData,
 } from "@/lib/crm-store";
-import { loadRequests } from "@/lib/requests-store";
+import {
+  loadCRMTaskConfig, onCRMTaskConfigChanged, customTaskAppliesToDate,
+  type CRMTasksConfig, type CustomTask,
+} from "@/lib/crm-task-config";
 import { employees } from "@/lib/mock-data";
 
 // ── Demo identity ─────────────────────────────────────────────────────────────
@@ -57,72 +64,75 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 }
 
 // ── Task 1: Ads ───────────────────────────────────────────────────────────────
-function AdsTaskForm({ date, onDone }: { date: string; onDone: () => void }) {
-  const [urls, setUrls] = useState(["", "", ""]);
-  const [confirmed, setConfirmed] = useState([false, false, false]);
-  const [submitting, setSubmitting] = useState(false);
+function AdsTaskForm({ date, onDone, linkCount = 3 }: { date: string; onDone: () => void; linkCount?: number }) {
+  const [urls, setUrls] = useState(() => Array(linkCount).fill(""));
+  const startedAt = useRef(Date.now());
 
   const platforms = urls.map(u => detectSocialPlatform(u));
   const valids = urls.map(u => isValidSocialUrl(u));
-  const canSubmit = valids.every(Boolean) && confirmed.every(Boolean);
 
-  function setUrl(i: number, v: string) { setUrls(prev => prev.map((u, idx) => idx === i ? v : u)); }
-  function setConf(i: number, v: boolean) { setConfirmed(prev => prev.map((c, idx) => idx === i ? v : c)); }
+  // Reject duplicate URLs across slots
+  const isDuplicate = urls.map((u, i) =>
+    valids[i] && urls.some((other, j) => j !== i && other === u && valids[j])
+  );
+
+  const linkOk = urls.map((_, i) => valids[i] && !isDuplicate[i]);
+  const canSubmit = linkOk.every(Boolean);
+
+  function setUrl(i: number, v: string) {
+    setUrls(prev => prev.map((u, idx) => idx === i ? v : u));
+  }
 
   function handleSubmit() {
     if (!canSubmit) return;
-    setSubmitting(true);
     const data: AdsTaskData = {
       urls,
       confirmedToday: true,
       platform: platforms.filter(Boolean) as string[],
     };
-    addDailyTask({ employeeId: ME_ID, employeeName: ME_NAME, date, taskType: "ads", data });
+    addDailyTask({ employeeId: ME_ID, employeeName: ME_NAME, date, taskType: "ads", data, durationSeconds: Math.round((Date.now() - startedAt.current) / 1000) });
     onDone();
   }
 
+  const todayFormatted = new Date(`${date}T00:00`).toLocaleDateString("en", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <p className="text-sm text-slate-500 dark:text-slate-400">
-        Submit 3 social media posts or WhatsApp campaign links from <b>today</b>. Each URL must be from a recognised platform and confirmed as posted today.
+        Submit {linkCount} social media posts from <b>today ({todayFormatted})</b>. Each link must be unique. Post date will be verified automatically by the server.
       </p>
-      {[0, 1, 2].map(i => (
-        <div key={i} className="rounded-2xl border border-[#DCE9E6] bg-[#F5F8F7] p-4 dark:border-slate-700 dark:bg-slate-800">
-          <p className={labelCls}>Link {i + 1}</p>
-          <input
-            type="url"
-            placeholder="https://facebook.com/post/..."
-            value={urls[i]}
-            onChange={e => setUrl(i, e.target.value)}
-            className={inputCls}
-          />
-          <div className="mt-2 flex items-center justify-between">
-            <span className="text-xs">
-              {urls[i] && valids[i] ? (
-                <span className="font-semibold text-[#0B4F4B] dark:text-[#8FD4C6]">{platforms[i]}</span>
-              ) : urls[i] ? (
-                <span className="text-rose-500">Not a recognised social media URL</span>
-              ) : (
-                <span className="text-slate-400">Platform detected automatically</span>
+      {Array.from({ length: linkCount }, (_, i) => i).map(i => {
+        const ok = linkOk[i];
+        const hasError = !!urls[i] && (!valids[i] || isDuplicate[i]);
+        return (
+          <div key={i} className={`rounded-2xl border p-4 transition ${ok ? "border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/40" : hasError ? "border-rose-200 bg-rose-50 dark:border-rose-900 dark:bg-rose-950/40" : "border-[#DCE9E6] bg-[#F5F8F7] dark:border-slate-700 dark:bg-slate-800"}`}>
+            <div className="mb-3 flex items-center justify-between">
+              <p className={labelCls + " mb-0"}>Link {i + 1}</p>
+              {ok && (
+                <span className="flex items-center gap-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                  <Check className="h-3 w-3" /> {platforms[i]}
+                </span>
               )}
-            </span>
-            {valids[i] && (
-              <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={confirmed[i]}
-                  onChange={e => setConf(i, e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300 text-[#0B4F4B] accent-[#0B4F4B]"
-                />
-                Posted today
-              </label>
+            </div>
+            <input
+              type="url"
+              placeholder="https://instagram.com/p/... or tiktok.com/..."
+              value={urls[i]}
+              onChange={e => setUrl(i, e.target.value)}
+              className={inputCls}
+            />
+            {urls[i] && !valids[i] && (
+              <p className="mt-1.5 text-xs text-rose-500">Not a recognised social media URL (Facebook, Instagram, TikTok, Snapchat, WhatsApp, etc.)</p>
+            )}
+            {valids[i] && isDuplicate[i] && (
+              <p className="mt-1.5 text-xs text-rose-500">This link is already used in another slot — each link must be unique.</p>
             )}
           </div>
-        </div>
-      ))}
+        );
+      })}
       <div className="flex justify-end gap-3 border-t border-[#DCE9E6] pt-4 dark:border-slate-700">
         <Button variant="outline" onClick={onDone}>Cancel</Button>
-        <Button onClick={handleSubmit} disabled={!canSubmit || submitting}>
+        <Button onClick={handleSubmit} disabled={!canSubmit}>
           <Check className="h-4 w-4" /> Mark Complete
         </Button>
       </div>
@@ -150,21 +160,21 @@ declare global {
 }
 
 const EMPTY_ASSESSMENT: ProjectAssessment = {
-  salesName: ME_NAME, date: todayISO(), companyName: "", projectName: "",
-  managementAndOperations: "", owner: "", investorType: "", previousWork: "",
-  location: "", projectArea: "", finishingType: "", projectDetails: "",
-  unitTypes: "", maintenance: "", deliveryDate: "",
+  salesName: ME_NAME, date: todayISO(),
+  projectName: "", companyName: "", previousWork: "", location: "",
+  projectArea: "", projectDetails: "", unitTypes: "", pricesAndAcres: "",
+  paymentPlan: "", finishingType: "", construction: "", deliveryDate: "",
+  maintenance: "", investorType: "", managementAndOperations: "",
+  termsOfContract: "", sellingPoints: "", weaknessPoints: "", additionalNotes: "",
+  owner: "",
 };
 
-type KnowledgeMode = "text" | "voice";
-
-function KnowledgeTaskForm({ date, onDone }: { date: string; onDone: () => void }) {
-  const [mode, setMode] = useState<KnowledgeMode | null>(null); // null = choosing
+function KnowledgeTaskForm({ date, onDone, fieldCfg }: { date: string; onDone: () => void; fieldCfg?: import("@/lib/crm-task-config").KnowledgeFieldConfig[] }) {
+  const startedAt = useRef(Date.now());
   const [form, setForm] = useState<ProjectAssessment>({ ...EMPTY_ASSESSMENT, salesName: ME_NAME, date });
   const [voiceLang, setVoiceLang] = useState<"ar" | "en">("ar");
-  const [isRecording, setIsRecording] = useState(false);
-  const [transcript, setTranscript] = useState("");
-  const [voiceSupported, setVoiceSupported] = useState(true);
+  const [recordingField, setRecordingField] = useState<keyof ProjectAssessment | null>(null);
+  const [voiceSupported, setVoiceSupported] = useState(false);
   const recognitionRef = useRef<ISpeechRecognition | null>(null);
 
   useEffect(() => {
@@ -175,13 +185,15 @@ function KnowledgeTaskForm({ date, onDone }: { date: string; onDone: () => void 
     setForm(prev => ({ ...prev, [key]: val }));
   }
 
-  function startRecording() {
+  function startVoice(key: keyof ProjectAssessment) {
+    if (recordingField) { recognitionRef.current?.stop(); }
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return;
     const rec: ISpeechRecognition = new SR();
     rec.lang = voiceLang === "ar" ? "ar-EG" : "en-US";
     rec.continuous = true;
     rec.interimResults = true;
+    const prefix = (form[key] ?? "").trim();
     let final = "";
     rec.onresult = (e) => {
       let interim = "";
@@ -189,48 +201,68 @@ function KnowledgeTaskForm({ date, onDone }: { date: string; onDone: () => void 
         const t = e.results[i][0].transcript;
         if (e.results[i].isFinal) final += t + " "; else interim = t;
       }
-      setTranscript(final + interim);
+      const appended = (prefix ? prefix + " " : "") + (final + interim).trimStart();
+      setForm(prev => ({ ...prev, [key]: appended.trimEnd() }));
     };
-    rec.onerror = () => setIsRecording(false);
-    rec.onend = () => setIsRecording(false);
+    rec.onerror = () => setRecordingField(null);
+    rec.onend = () => setRecordingField(null);
     rec.start();
     recognitionRef.current = rec;
-    setIsRecording(true);
+    setRecordingField(key);
   }
 
-  function stopRecording() {
+  function stopVoice() {
     recognitionRef.current?.stop();
-    setIsRecording(false);
+    setRecordingField(null);
   }
-
-  const requiredFields: (keyof ProjectAssessment)[] = ["companyName", "projectName", "location"];
-  const textCanSubmit = requiredFields.every(f => form[f].trim());
-  const voiceCanSubmit = !!transcript.trim();
 
   function handleSubmit() {
-    if (mode === "text") {
-      if (!textCanSubmit) return;
-      const data: KnowledgeTaskData = { assessment: form };
-      addDailyTask({ employeeId: ME_ID, employeeName: ME_NAME, date, taskType: "knowledge", data });
-    } else {
-      if (!voiceCanSubmit) return;
-      const data: KnowledgeTaskData = {
-        assessment: { ...EMPTY_ASSESSMENT, salesName: ME_NAME, date },
-        voiceNoteTranscript: transcript.trim(),
-        voiceNoteLanguage: voiceLang,
-      };
-      addDailyTask({ employeeId: ME_ID, employeeName: ME_NAME, date, taskType: "knowledge", data });
-    }
+    const data: KnowledgeTaskData = { assessment: form };
+    addDailyTask({ employeeId: ME_ID, employeeName: ME_NAME, date, taskType: "knowledge", data, durationSeconds: Math.round((Date.now() - startedAt.current) / 1000) });
     onDone();
   }
 
-  function Field({ label, k, placeholder, multiline }: { label: string; k: keyof ProjectAssessment; placeholder?: string; multiline?: boolean }) {
+  // Textarea fields with voice support (all textareas — text/dropdown/date fields excluded naturally)
+  function Field({ label, ar: _ar, k, placeholder, fieldType, options, required: isRequired, stretch }: {
+    label: string; ar: string; k: keyof ProjectAssessment;
+    placeholder?: string; fieldType?: "text" | "date" | "dropdown" | "textarea"; options?: string[]; required?: boolean; stretch?: boolean;
+  }) {
+    const isVoiceField = fieldType === "textarea" && voiceSupported;
+    const isThisRecording = recordingField === k;
     return (
-      <div>
-        <label className={labelCls}>{label}</label>
-        {multiline ? (
+      <div className={stretch ? "flex h-full flex-col" : ""}>
+        <div className="mb-1.5 flex items-center justify-between">
+          <span className={labelCls}>
+            {label}{isRequired && <span className="ml-0.5 text-rose-400">*</span>}
+          </span>
+          {isVoiceField && (
+            <button
+              type="button"
+              onClick={() => isThisRecording ? stopVoice() : startVoice(k)}
+              className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold transition ${
+                isThisRecording
+                  ? "animate-pulse bg-rose-100 text-rose-600 hover:bg-rose-200 dark:bg-rose-950 dark:text-rose-300"
+                  : "bg-[#E8F3F1] text-[#0B4F4B] hover:bg-[#D0EDE9] dark:bg-[#0B2927] dark:text-[#8FD4C6]"
+              }`}
+            >
+              {isThisRecording
+                ? <><MicOff className="h-3 w-3" /> Stop</>
+                : <Mic className="h-3 w-3" />
+              }
+            </button>
+          )}
+        </div>
+        {fieldType === "dropdown" && options ? (
+          <select value={form[k]} onChange={e => setField(k, e.target.value)}
+            className={`${inputCls} bg-white dark:bg-slate-900`}>
+            <option value="">— Select —</option>
+            {options.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        ) : fieldType === "textarea" ? (
           <textarea rows={3} value={form[k]} onChange={e => setField(k, e.target.value)} placeholder={placeholder}
-            className={`${inputCls} resize-none`} />
+            className={`${inputCls} resize-none${stretch ? " flex-1" : ""}${isThisRecording ? " ring-2 ring-rose-300 dark:ring-rose-700" : ""}`} />
+        ) : fieldType === "date" ? (
+          <input type="date" value={form[k]} onChange={e => setField(k, e.target.value)} className={inputCls} />
         ) : (
           <input type="text" value={form[k]} onChange={e => setField(k, e.target.value)} placeholder={placeholder} className={inputCls} />
         )}
@@ -238,162 +270,83 @@ function KnowledgeTaskForm({ date, onDone }: { date: string; onDone: () => void 
     );
   }
 
-  // ── Mode selector ──────────────────────────────────────────────────────────
-  if (mode === null) {
-    return (
-      <div className="space-y-4">
-        <p className="text-sm text-slate-500 dark:text-slate-400">How would you like to complete this assessment?</p>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <button
-            onClick={() => setMode("text")}
-            className="flex flex-col items-center gap-3 rounded-2xl border-2 border-[#DCE9E6] bg-white p-6 text-center transition hover:border-[#0B4F4B] hover:bg-[#E8F3F1] dark:border-slate-700 dark:bg-slate-900 dark:hover:border-[#2E7D76] dark:hover:bg-[#0B2927]"
-          >
-            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[#E8F3F1] dark:bg-[#0B2927]">
-              <svg className="h-6 w-6 text-[#0B4F4B] dark:text-[#8FD4C6]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-            </span>
-            <div>
-              <p className="font-semibold text-slate-900 dark:text-white">Fill Form</p>
-              <p className="mt-1 text-xs text-slate-400">Type in the project assessment fields</p>
+  function renderGrid() {
+    const fields = (fieldCfg ?? []).filter(f => f.enabled);
+    const cells: React.ReactNode[] = [];
+    let i = 0;
+    while (i < fields.length) {
+      const f = fields[i];
+      if (f.layout === "full") {
+        cells.push(
+          <div key={f.key} className="sm:col-span-2">
+            <Field label={f.labelEn} ar={f.labelAr} k={f.key}
+              fieldType={f.fieldType} options={f.options} required={f.required} />
+          </div>
+        );
+      } else if (f.layout !== "right" && fields[i + 1]?.layout === "right") {
+        i++;
+        const rightGroup = [fields[i]];
+        while (i + 1 < fields.length && fields[i + 1].layout === "right") { i++; rightGroup.push(fields[i]); }
+        cells.push(
+          <div key={f.key + "-flex-pair"} className="flex gap-3 sm:col-span-2">
+            <div className="flex flex-1 flex-col">
+              <Field label={f.labelEn} ar={f.labelAr} k={f.key}
+                fieldType={f.fieldType} options={f.options} required={f.required} stretch />
             </div>
-          </button>
-
-          <button
-            onClick={() => setMode("voice")}
-            disabled={!voiceSupported}
-            className="flex flex-col items-center gap-3 rounded-2xl border-2 border-[#DCE9E6] bg-white p-6 text-center transition hover:border-[#0B4F4B] hover:bg-[#E8F3F1] disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-[#2E7D76] dark:hover:bg-[#0B2927]"
-          >
-            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[#E8F3F1] dark:bg-[#0B2927]">
-              <Mic className="h-6 w-6 text-[#0B4F4B] dark:text-[#8FD4C6]" />
-            </span>
-            <div>
-              <p className="font-semibold text-slate-900 dark:text-white">Voice Note</p>
-              <p className="mt-1 text-xs text-slate-400">
-                {voiceSupported ? "Record and transcribe in Arabic or English" : "Requires Chrome or Edge"}
-              </p>
+            <div className="flex flex-1 flex-col gap-2">
+              {rightGroup.map(g => (
+                <Field key={g.key} label={g.labelEn} ar={g.labelAr} k={g.key}
+                  fieldType={g.fieldType} options={g.options} required={g.required} />
+              ))}
             </div>
-          </button>
-        </div>
-        <div className="flex justify-end pt-2">
-          <Button variant="outline" onClick={onDone}>Cancel</Button>
-        </div>
-      </div>
-    );
+          </div>
+        );
+      } else {
+        cells.push(
+          <div key={f.key} className={f.layout === "right" ? "" : ""}>
+            <Field label={f.labelEn} ar={f.labelAr} k={f.key}
+              fieldType={f.fieldType} options={f.options} required={f.required} />
+          </div>
+        );
+      }
+      i++;
+    }
+    return cells;
   }
 
-  // ── Voice mode ─────────────────────────────────────────────────────────────
-  if (mode === "voice") {
-    return (
-      <div className="space-y-5">
-        <div className="flex items-center gap-3">
-          <button onClick={() => { stopRecording(); setMode(null); setTranscript(""); }}
-            className="flex items-center gap-1.5 text-xs font-semibold text-slate-400 transition hover:text-[#0B4F4B] dark:hover:text-[#8FD4C6]">
-            ← Change method
-          </button>
-        </div>
-
-        <div className="rounded-2xl border border-[#DCE9E6] bg-[#F5F8F7] p-5 dark:border-slate-700 dark:bg-slate-800">
-          <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
-            Speak your project assessment. The system will transcribe your voice exactly as spoken.
-          </p>
-          <div className="mb-4 flex items-center gap-4">
-            <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Language</span>
-            {(["ar", "en"] as const).map(l => (
-              <label key={l} className="flex cursor-pointer items-center gap-1.5 text-sm font-medium text-slate-600 dark:text-slate-300">
-                <input type="radio" name="voiceLang" value={l} checked={voiceLang === l} onChange={() => { if (!isRecording) setVoiceLang(l); }}
-                  className="accent-[#0B4F4B]" />
-                {l === "ar" ? "العربية (Arabic)" : "English"}
-              </label>
-            ))}
-          </div>
-
-          <div className="flex items-center gap-3">
-            <button
-              onClick={isRecording ? stopRecording : startRecording}
-              className={`flex items-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold transition ${isRecording ? "bg-rose-100 text-rose-700 hover:bg-rose-200 dark:bg-rose-950 dark:text-rose-300" : "bg-[#0B4F4B] text-white hover:bg-[#063C39]"}`}
-            >
-              {isRecording ? <><MicOff className="h-4 w-4" /> Stop</> : <><Mic className="h-4 w-4" /> Start Recording</>}
-            </button>
-            {isRecording && (
-              <span className="flex items-center gap-1.5 text-sm font-medium text-rose-600 dark:text-rose-400">
-                <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-rose-500" /> Recording…
-              </span>
-            )}
-            {!isRecording && transcript && (
-              <button onClick={() => setTranscript("")} className="text-xs text-slate-400 transition hover:text-rose-500">
-                Clear
-              </button>
-            )}
-          </div>
-        </div>
-
-        {transcript ? (
-          <div className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Transcript</p>
-            <p
-              className={`text-sm leading-7 text-slate-800 dark:text-slate-100 ${voiceLang === "ar" ? "text-right" : ""}`}
-              dir={voiceLang === "ar" ? "rtl" : "ltr"}
-            >
-              {transcript}
-            </p>
-          </div>
-        ) : (
-          <div className="rounded-2xl border border-dashed border-[#DCE9E6] bg-white p-6 text-center text-sm text-slate-400 dark:border-slate-700 dark:bg-slate-900">
-            Transcript will appear here as you speak
-          </div>
-        )}
-
-        <div className="flex justify-end gap-3 border-t border-[#DCE9E6] pt-4 dark:border-slate-700">
-          <Button variant="outline" onClick={onDone}>Cancel</Button>
-          <Button onClick={handleSubmit} disabled={!voiceCanSubmit || isRecording}>
-            <Check className="h-4 w-4" /> Save & Complete
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Text / form mode ───────────────────────────────────────────────────────
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-3">
-        <button onClick={() => setMode(null)}
-          className="flex items-center gap-1.5 text-xs font-semibold text-slate-400 transition hover:text-[#0B4F4B] dark:hover:text-[#8FD4C6]">
-          ← Change method
-        </button>
-      </div>
+      {/* Voice language toggle — shown only when speech recognition is available */}
+      {voiceSupported && (
+        <div className="flex items-center gap-4 rounded-xl border border-[#DCE9E6] bg-[#F5F8F7] px-4 py-2.5 dark:border-slate-700 dark:bg-slate-800">
+          <Mic className="h-3.5 w-3.5 shrink-0 text-[#0B4F4B] dark:text-[#8FD4C6]" />
+          <span className="text-xs text-slate-500 dark:text-slate-400">Voice language</span>
+          {(["ar", "en"] as const).map(l => (
+            <label key={l} className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-300">
+              <input type="radio" name="voiceLang" value={l} checked={voiceLang === l}
+                onChange={() => { if (!recordingField) setVoiceLang(l); }}
+                className="accent-[#0B4F4B]" />
+              {l === "ar" ? "العربية" : "English"}
+            </label>
+          ))}
+          {recordingField && (
+            <span className="ml-auto flex items-center gap-1.5 text-xs font-medium text-rose-500">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-rose-500" /> Recording…
+            </span>
+          )}
+        </div>
+      )}
 
-      <div className="space-y-4">
+      <div className="space-y-3">
         <p className="text-xs font-semibold uppercase tracking-wide text-[#0B4F4B] dark:text-[#8FD4C6]">Project Assessment</p>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Company Name *" k="companyName" placeholder="Developer / company name" />
-          <Field label="Project Name *" k="projectName" placeholder="Project name" />
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Management & Operations" k="managementAndOperations" placeholder="Management entity" />
-          <Field label="Owner" k="owner" placeholder="Owner name" />
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Investor Type" k="investorType" placeholder="e.g. Individual, Corporate" />
-          <Field label="Previous Work" k="previousWork" placeholder="Developer's previous projects" />
-        </div>
-        <Field label="Location *" k="location" placeholder="Project location" />
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Project Area" k="projectArea" placeholder="Total area (m²)" />
-          <Field label="Finishing Type" k="finishingType" placeholder="e.g. Fully finished, Core & shell" />
-        </div>
-        <Field label="Project Details" k="projectDetails" placeholder="Key project details…" multiline />
-        <Field label="Unit Types, Prices & Areas" k="unitTypes" placeholder="e.g. 2BR from EGP 2.5M (100–130 m²)…" multiline />
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Maintenance" k="maintenance" placeholder="Maintenance fee / policy" />
-          <Field label="Delivery Date" k="deliveryDate" placeholder="Expected delivery" />
+        <div className="grid items-start gap-3 sm:grid-cols-2">
+          {renderGrid()}
         </div>
       </div>
 
       <div className="flex justify-end gap-3 border-t border-[#DCE9E6] pt-4 dark:border-slate-700">
         <Button variant="outline" onClick={onDone}>Cancel</Button>
-        <Button onClick={handleSubmit} disabled={!textCanSubmit}>
+        <Button onClick={handleSubmit}>
           <Check className="h-4 w-4" /> Mark Complete
         </Button>
       </div>
@@ -405,6 +358,7 @@ function KnowledgeTaskForm({ date, onDone }: { date: string; onDone: () => void 
 function CallsTaskForm({ date, onDone }: { date: string; onDone: () => void }) {
   const [fresh, setFresh] = useState("");
   const [old, setOld] = useState("");
+  const startedAt = useRef(Date.now());
   const [delay, setDelay] = useState("");
 
   const freshN = parseInt(fresh) || 0;
@@ -416,7 +370,7 @@ function CallsTaskForm({ date, onDone }: { date: string; onDone: () => void }) {
   function handleSubmit() {
     if (!canSubmit) return;
     const data: CallsTaskData = { freshCalls: freshN, oldCalls: oldN, delayCalls: delayN };
-    addDailyTask({ employeeId: ME_ID, employeeName: ME_NAME, date, taskType: "calls", data });
+    addDailyTask({ employeeId: ME_ID, employeeName: ME_NAME, date, taskType: "calls", data, durationSeconds: Math.round((Date.now() - startedAt.current) / 1000) });
     onDone();
   }
 
@@ -457,15 +411,19 @@ const SALES_TEAM = employees.filter(e => e.department === "Sales" && e.id !== ME
 function RotationTaskForm({ date, onDone }: { date: string; onDone: () => void }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
+  const startedAt = useRef(Date.now());
 
   function toggle(id: string) {
     setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   }
 
+  const canSubmit = selected.length > 0;
+
   function handleSubmit() {
+    if (!canSubmit) return;
     const names = SALES_TEAM.filter(e => selected.includes(e.id)).map(e => e.name);
     const data: RotationTaskData = { rotatedWithIds: selected, rotatedWithNames: names, notes };
-    addDailyTask({ employeeId: ME_ID, employeeName: ME_NAME, date, taskType: "rotation", data });
+    addDailyTask({ employeeId: ME_ID, employeeName: ME_NAME, date, taskType: "rotation", data, durationSeconds: Math.round((Date.now() - startedAt.current) / 1000) });
     onDone();
   }
 
@@ -494,10 +452,13 @@ function RotationTaskForm({ date, onDone }: { date: string; onDone: () => void }
       </div>
       <div className="flex justify-end gap-3 border-t border-[#DCE9E6] pt-4 dark:border-slate-700">
         <Button variant="outline" onClick={onDone}>Cancel</Button>
-        <Button onClick={handleSubmit}>
+        <Button onClick={handleSubmit} disabled={!canSubmit}>
           <Check className="h-4 w-4" /> Mark Complete
         </Button>
       </div>
+      {!canSubmit && (
+        <p className="text-center text-xs text-rose-500">Select at least one team member to complete rotation</p>
+      )}
     </div>
   );
 }
@@ -551,7 +512,11 @@ function RequestForm({ date, onDone, onCancel }: { date: string; onDone: () => v
           <label className={labelCls}>Lead Source *</label>
           <select value={form.leadSource} onChange={e => set("leadSource", e.target.value)} className={inputCls}>
             <option value="">Select source…</option>
-            {LEAD_SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
+            {LEAD_SOURCE_GROUPS.map(g => (
+              <optgroup key={g.label} label={g.label}>
+                {g.options.map(s => <option key={s} value={s}>{s}</option>)}
+              </optgroup>
+            ))}
           </select>
         </div>
         <div>
@@ -573,84 +538,667 @@ function RequestForm({ date, onDone, onCancel }: { date: string; onDone: () => v
   );
 }
 
+// ── Quick meeting form ────────────────────────────────────────────────────────
+function MeetingForm({ date, onDone, onCancel }: { date: string; onDone: () => void; onCancel: () => void }) {
+  const [form, setForm] = useState({ clientName: "", clientNumber: "", projectName: "", meetingLocation: "", notes: "" });
+  const [submitted, setSubmitted] = useState(false);
+  const now = new Date();
+  const timeStr = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+
+  function set(k: keyof typeof form, v: string) { setForm(prev => ({ ...prev, [k]: v })); }
+  const canSubmit = form.clientName.trim() && form.projectName.trim();
+
+  function handleSubmit() {
+    if (!canSubmit) return;
+    addVisit({
+      employeeName: ME_NAME,
+      employeeRole: "Sales",
+      clientName: form.clientName.trim(),
+      clientNumber: form.clientNumber.trim(),
+      date,
+      time: timeStr,
+      zone: "Office",
+      projectName: form.projectName.trim(),
+      meetingLocation: form.meetingLocation.trim() || "Office",
+      notes: form.notes.trim(),
+    });
+    setSubmitted(true);
+  }
+
+  if (submitted) {
+    return (
+      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-6 text-center dark:border-emerald-900 dark:bg-emerald-950">
+        <Check className="mx-auto mb-3 h-8 w-8 text-emerald-600 dark:text-emerald-400" />
+        <p className="font-semibold text-emerald-800 dark:text-emerald-300">Meeting logged!</p>
+        <p className="mt-1 text-xs text-emerald-600 dark:text-emerald-400">Pending approval from manager.</p>
+        <div className="mt-4 flex justify-center gap-3">
+          <Button size="sm" onClick={() => { setForm({ clientName: "", clientNumber: "", projectName: "", meetingLocation: "", notes: "" }); setSubmitted(false); }}>
+            <Plus className="h-3 w-3" /> Add Another
+          </Button>
+          <Button size="sm" variant="outline" onClick={onDone}>Done</Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label className={labelCls}>Client Name *</label>
+          <input type="text" value={form.clientName} onChange={e => set("clientName", e.target.value)} placeholder="Full name" className={inputCls} />
+        </div>
+        <div>
+          <label className={labelCls}>Client Number</label>
+          <input type="tel" value={form.clientNumber} onChange={e => set("clientNumber", e.target.value)} placeholder="+20 1XX XXX XXXX" className={inputCls} />
+        </div>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label className={labelCls}>Project Name *</label>
+          <input type="text" value={form.projectName} onChange={e => set("projectName", e.target.value)} placeholder="e.g. Marassi North Coast" className={inputCls} />
+        </div>
+        <div>
+          <label className={labelCls}>Location</label>
+          <input type="text" value={form.meetingLocation} onChange={e => set("meetingLocation", e.target.value)} placeholder="Office / site / client office…" className={inputCls} />
+        </div>
+      </div>
+      <div>
+        <label className={labelCls}>Notes</label>
+        <textarea rows={3} value={form.notes} onChange={e => set("notes", e.target.value)} placeholder="Client interest, outcome, follow-up…" className={`${inputCls} resize-none`} />
+      </div>
+      <p className="text-xs text-slate-400">Time logged automatically as {timeStr}. Requires manager approval.</p>
+      <div className="flex justify-end gap-3 border-t border-[#DCE9E6] pt-4 dark:border-slate-700">
+        <Button variant="outline" onClick={onCancel}>Cancel</Button>
+        <Button onClick={handleSubmit} disabled={!canSubmit}>
+          <Check className="h-4 w-4" /> Log Meeting
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ── Shared voice recorder for custom tasks ────────────────────────────────────
+type CustomTaskMode = "text" | "voice";
+type CustomVoiceStep = "record" | "review";
+
+function VoiceRecorderPanel({
+  onTranscript,
+  onCancel,
+  canSave = true,
+}: {
+  onTranscript: (text: string, lang: "ar" | "en") => void;
+  onCancel: () => void;
+  canSave?: boolean;
+}) {
+  const [voiceLang, setVoiceLang] = useState<"ar" | "en">("ar");
+  const [isRecording, setIsRecording] = useState(false);
+  const [transcript, setTranscript] = useState("");
+  const [voiceStep, setVoiceStep] = useState<CustomVoiceStep>("record");
+  const [supported, setSupported] = useState(true);
+  const recRef = useRef<ISpeechRecognition | null>(null);
+
+  useEffect(() => {
+    setSupported(!!(window.SpeechRecognition || window.webkitSpeechRecognition));
+  }, []);
+
+  function startRecording() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+    const rec: ISpeechRecognition = new SR();
+    rec.lang = voiceLang === "ar" ? "ar-EG" : "en-US";
+    rec.continuous = true;
+    rec.interimResults = true;
+    let final = "";
+    rec.onresult = (e) => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) final += t + " "; else interim = t;
+      }
+      setTranscript(final + interim);
+    };
+    rec.onerror = () => setIsRecording(false);
+    rec.onend = () => setIsRecording(false);
+    rec.start();
+    recRef.current = rec;
+    setIsRecording(true);
+  }
+
+  function stopRecording() {
+    recRef.current?.stop();
+    setIsRecording(false);
+  }
+
+  const isAr = voiceLang === "ar";
+
+  if (!supported) {
+    return (
+      <div className="rounded-2xl border border-[#DCE9E6] bg-[#F5F8F7] p-6 text-center dark:border-slate-700 dark:bg-slate-800">
+        <p className="text-sm text-slate-500">Voice recording requires Chrome or Edge.</p>
+        <button onClick={onCancel} className="mt-3 text-xs font-semibold text-[#0B4F4B] hover:underline dark:text-[#8FD4C6]">← Use text instead</button>
+      </div>
+    );
+  }
+
+  if (voiceStep === "review") {
+    return (
+      <div className="space-y-4">
+        <button onClick={() => setVoiceStep("record")} className="flex items-center gap-1 text-xs font-semibold text-slate-400 hover:text-[#0B4F4B] dark:hover:text-[#8FD4C6]">← Re-record</button>
+        <div className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
+          <p className={`mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400 ${isAr ? "text-right" : ""}`}>
+            {isAr ? "النص المسجل — يمكنك التعديل قبل الحفظ" : "Your transcript — edit before saving"}
+          </p>
+          <textarea
+            rows={6}
+            value={transcript}
+            onChange={e => setTranscript(e.target.value)}
+            dir={isAr ? "rtl" : "ltr"}
+            className={`w-full resize-none rounded-xl border border-[#DCE9E6] bg-[#F5F8F7] px-3 py-2.5 text-sm leading-7 text-slate-800 focus:border-[#0B4F4B] focus:outline-none focus:ring-2 focus:ring-[#0B4F4B]/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${isAr ? "text-right" : ""}`}
+          />
+          <button onClick={() => { setTranscript(""); setVoiceStep("record"); }} className="mt-2 text-xs text-slate-400 hover:text-rose-500">
+            {isAr ? "إعادة التسجيل" : "Clear & re-record"}
+          </button>
+        </div>
+        <div className="flex justify-end gap-3 border-t border-[#DCE9E6] pt-4 dark:border-slate-700">
+          <Button variant="outline" onClick={onCancel}>← Text mode</Button>
+          <Button onClick={() => { stopRecording(); onTranscript(transcript.trim(), voiceLang); }} disabled={!transcript.trim() || !canSave}>
+            <Check className="h-4 w-4" /> {isAr ? "حفظ وإتمام" : "Save & Submit"}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <button onClick={onCancel} className="flex items-center gap-1 text-xs font-semibold text-slate-400 hover:text-[#0B4F4B] dark:hover:text-[#8FD4C6]">← Text mode</button>
+      <div className="rounded-2xl border border-[#DCE9E6] bg-[#F5F8F7] p-5 dark:border-slate-700 dark:bg-slate-800">
+        <div className="mb-4 flex items-center gap-4">
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Language</span>
+          {(["ar", "en"] as const).map(l => (
+            <label key={l} className="flex cursor-pointer items-center gap-1.5 text-sm font-medium text-slate-600 dark:text-slate-300">
+              <input type="radio" name="vcLang" value={l} checked={voiceLang === l} onChange={() => { if (!isRecording) setVoiceLang(l); }} className="accent-[#0B4F4B]" />
+              {l === "ar" ? "العربية" : "English"}
+            </label>
+          ))}
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={isRecording ? stopRecording : startRecording}
+            className={`flex items-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold transition ${isRecording ? "bg-rose-100 text-rose-700 hover:bg-rose-200 dark:bg-rose-950 dark:text-rose-300" : "bg-[#0B4F4B] text-white hover:bg-[#063C39]"}`}
+          >
+            {isRecording ? <><MicOff className="h-4 w-4" /> Stop</> : <><Mic className="h-4 w-4" /> Start Recording</>}
+          </button>
+          {isRecording && <span className="flex items-center gap-1.5 text-sm font-medium text-rose-600 dark:text-rose-400"><span className="h-2.5 w-2.5 animate-pulse rounded-full bg-rose-500" /> Recording…</span>}
+          {!isRecording && transcript && <button onClick={() => setTranscript("")} className="text-xs text-slate-400 hover:text-rose-500">Clear</button>}
+        </div>
+      </div>
+      {transcript ? (
+        <div className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Transcript</p>
+          <p className={`text-sm leading-7 text-slate-800 dark:text-slate-100 ${isAr ? "text-right" : ""}`} dir={isAr ? "rtl" : "ltr"}>{transcript}</p>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-dashed border-[#DCE9E6] bg-white p-6 text-center text-sm text-slate-400 dark:border-slate-700 dark:bg-slate-900">
+          {isAr ? "النص سيظهر هنا أثناء الكلام" : "Transcript will appear here as you speak"}
+        </div>
+      )}
+      <div className="flex justify-end gap-3 border-t border-[#DCE9E6] pt-4 dark:border-slate-700">
+        <Button variant="outline" onClick={onCancel}>← Text mode</Button>
+        <Button onClick={() => setVoiceStep("review")} disabled={!transcript.trim() || isRecording}>
+          {isAr ? "مراجعة قبل الحفظ" : "Review & Save"} →
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ── Task resources panel (links + attachments) ───────────────────────────────
+function TaskResources({ task, onItemOpened }: { task: CustomTask; onItemOpened?: (id: string) => void }) {
+  const links = task.links ?? [];
+  const attachments = task.attachments ?? [];
+  const [opened, setOpened] = useState<Set<string>>(new Set());
+
+  if (links.length === 0 && attachments.length === 0) return null;
+
+  function markOpened(id: string) {
+    setOpened(prev => { const s = new Set(prev); s.add(id); return s; });
+    onItemOpened?.(id);
+  }
+
+  const total = links.length + attachments.length;
+  const allOpened = opened.size >= total;
+
+  return (
+    <div className="rounded-2xl border border-[#DCE9E6] bg-[#F5F8F7] p-4 dark:border-slate-700 dark:bg-slate-800">
+      <div className="mb-3 flex items-center justify-between">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Reference material</p>
+        {!allOpened && (
+          <span className="text-xs font-semibold text-amber-600 dark:text-amber-400">
+            Open all to continue ({opened.size}/{total})
+          </span>
+        )}
+        {allOpened && (
+          <span className="flex items-center gap-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+            <Check className="h-3 w-3" /> All opened
+          </span>
+        )}
+      </div>
+      <div className="space-y-2">
+        {links.map(lnk => {
+          const done = opened.has(lnk.id);
+          return (
+            <a
+              key={lnk.id}
+              href={lnk.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => markOpened(lnk.id)}
+              className={`flex items-center gap-2.5 rounded-xl border px-3 py-2.5 text-sm transition ${done ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300" : "border-[#DCE9E6] bg-white text-[#0B4F4B] hover:border-[#0B4F4B] hover:bg-[#E8F3F1] dark:border-slate-700 dark:bg-slate-900 dark:text-[#8FD4C6] dark:hover:border-[#2E7D76] dark:hover:bg-[#0B2927]"}`}
+            >
+              {done ? <Check className="h-4 w-4 shrink-0 text-emerald-500" /> : <ExternalLink className="h-4 w-4 shrink-0" />}
+              <span className="flex-1 truncate font-medium">{lnk.label || lnk.url}</span>
+            </a>
+          );
+        })}
+        {attachments.map(att => {
+          const done = opened.has(att.id);
+          return (
+            <a
+              key={att.id}
+              href={att.dataUrl}
+              download={att.name}
+              onClick={() => markOpened(att.id)}
+              className={`flex items-center gap-2.5 rounded-xl border px-3 py-2.5 text-sm transition ${done ? "border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/40" : "border-[#DCE9E6] bg-white hover:border-[#0B4F4B] dark:border-slate-700 dark:bg-slate-900"}`}
+            >
+              {done ? <Check className="h-4 w-4 shrink-0 text-emerald-500" /> : <Paperclip className="h-4 w-4 shrink-0 text-slate-400" />}
+              <span className="flex-1 truncate text-slate-700 dark:text-slate-200">{att.name}</span>
+              <span className="text-xs text-slate-400">
+                {att.sizeBytes < 1024 ? `${att.sizeBytes} B` : att.sizeBytes < 1048576 ? `${(att.sizeBytes / 1024).toFixed(0)} KB` : `${(att.sizeBytes / 1048576).toFixed(1)} MB`}
+              </span>
+            </a>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Custom task: normal acknowledgement modal ─────────────────────────────────
+function CustomTaskAckModal({ task, date, onDone }: { task: CustomTask; date: string; onDone: () => void }) {
+  const [mode, setMode] = useState<CustomTaskMode | null>(task.allowVoice ? null : "text");
+  const [note, setNote] = useState("");
+  const [openedCount, setOpenedCount] = useState(0);
+  const startedAt = useRef(Date.now());
+
+  const totalItems = (task.links?.length ?? 0) + (task.attachments?.length ?? 0);
+  const allItemsOpened = totalItems === 0 || openedCount >= totalItems;
+  const canSubmit = note.trim().length > 0 && allItemsOpened;
+
+  function handleTextSubmit() {
+    if (!canSubmit) return;
+    addCustomTaskCompletion({ taskId: task.id, employeeId: ME_ID, date, note: note.trim(), wasBlocked: false, durationSeconds: Math.round((Date.now() - startedAt.current) / 1000) });
+    onDone();
+  }
+
+  function handleVoiceSubmit(transcript: string) {
+    addCustomTaskCompletion({ taskId: task.id, employeeId: ME_ID, date, note: transcript, wasBlocked: false, durationSeconds: Math.round((Date.now() - startedAt.current) / 1000) });
+    onDone();
+  }
+
+  // ── Mode selector ────────────────────────────────────────────────────────────
+  if (mode === null) {
+    return (
+      <div className="space-y-4">
+        {task.description && <p className="text-sm text-slate-500 dark:text-slate-400">{task.description}</p>}
+        <TaskResources task={task} onItemOpened={() => setOpenedCount(c => c + 1)} />
+        {!allItemsOpened && <p className="text-xs font-semibold text-amber-600 dark:text-amber-400">Open all reference materials above before continuing.</p>}
+        <p className="text-sm text-slate-500 dark:text-slate-400">How would you like to complete this task?</p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <button onClick={() => setMode("text")} className="flex flex-col items-center gap-3 rounded-2xl border-2 border-[#DCE9E6] bg-white p-6 text-center transition hover:border-[#0B4F4B] hover:bg-[#E8F3F1] dark:border-slate-700 dark:bg-slate-900 dark:hover:border-[#2E7D76] dark:hover:bg-[#0B2927]">
+            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[#E8F3F1] dark:bg-[#0B2927]">
+              <svg className="h-6 w-6 text-[#0B4F4B] dark:text-[#8FD4C6]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+            </span>
+            <div><p className="font-semibold text-slate-900 dark:text-white">Type</p><p className="mt-1 text-xs text-slate-400">Write a completion note</p></div>
+          </button>
+          <button onClick={() => setMode("voice")} className="flex flex-col items-center gap-3 rounded-2xl border-2 border-[#DCE9E6] bg-white p-6 text-center transition hover:border-[#0B4F4B] hover:bg-[#E8F3F1] dark:border-slate-700 dark:bg-slate-900 dark:hover:border-[#2E7D76] dark:hover:bg-[#0B2927]">
+            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[#E8F3F1] dark:bg-[#0B2927]"><Mic className="h-6 w-6 text-[#0B4F4B] dark:text-[#8FD4C6]" /></span>
+            <div><p className="font-semibold text-slate-900 dark:text-white">Voice Note</p><p className="mt-1 text-xs text-slate-400">Record in Arabic or English</p></div>
+          </button>
+        </div>
+        <div className="flex justify-end pt-2"><Button variant="outline" onClick={onDone}>Cancel</Button></div>
+      </div>
+    );
+  }
+
+  if (mode === "voice") {
+    return (
+      <div className="space-y-4">
+        {task.description && <p className="text-sm text-slate-500 dark:text-slate-400">{task.description}</p>}
+        <TaskResources task={task} onItemOpened={() => setOpenedCount(c => c + 1)} />
+        {!allItemsOpened && <p className="text-xs font-semibold text-amber-600 dark:text-amber-400">Open all reference materials above before submitting.</p>}
+        <VoiceRecorderPanel onTranscript={handleVoiceSubmit} canSave={allItemsOpened} onCancel={() => setMode(null)} />
+      </div>
+    );
+  }
+
+  // text mode
+  return (
+    <div className="space-y-4">
+      {task.description && <p className="text-sm text-slate-500 dark:text-slate-400">{task.description}</p>}
+      <TaskResources task={task} onItemOpened={() => setOpenedCount(c => c + 1)} />
+      {task.allowVoice && (
+        <button onClick={() => setMode(null)} className="flex items-center gap-1 text-xs font-semibold text-slate-400 hover:text-[#0B4F4B] dark:hover:text-[#8FD4C6]">← Change method</button>
+      )}
+      <div>
+        <label className={labelCls}>Completion note *</label>
+        <textarea rows={4} value={note} onChange={e => setNote(e.target.value)} placeholder="Describe what you did to complete this task…" className={`${inputCls} resize-none`} />
+        <p className="mt-1 text-xs text-slate-400">A note is required to mark this task as complete.</p>
+      </div>
+      {!allItemsOpened && totalItems > 0 && (
+        <p className="text-xs font-semibold text-amber-600 dark:text-amber-400">Open all reference materials ({openedCount}/{totalItems}) before submitting.</p>
+      )}
+      <div className="flex justify-end gap-3 border-t border-[#DCE9E6] pt-4 dark:border-slate-700">
+        <Button variant="outline" onClick={onDone}>Cancel</Button>
+        <Button onClick={handleTextSubmit} disabled={!canSubmit}><Check className="h-4 w-4" /> Mark Complete</Button>
+      </div>
+    </div>
+  );
+}
+
+// ── Custom task: integrity-locked assessment modal ────────────────────────────
+function PriorityAssessmentModal({ task, date, onDone }: { task: CustomTask; date: string; onDone: () => void }) {
+  const [mode, setMode] = useState<CustomTaskMode | null>(task.allowVoice ? null : "text");
+  const [note, setNote] = useState("");
+  // Initialise blocked from persisted localStorage lock so reopening still shows locked
+  const [blocked, setBlocked] = useState(() => isAssessmentBlocked(ME_ID, task.id, date));
+  const [openedCount, setOpenedCount] = useState(0);
+  const startedAt = useRef(Date.now());
+  // Grace-period: opening a reference link triggers visibilitychange — don't lock for it
+  const linkJustClicked = useRef(false);
+
+  const totalItems = (task.links?.length ?? 0) + (task.attachments?.length ?? 0);
+  const allItemsOpened = totalItems === 0 || openedCount >= totalItems;
+
+  function onItemOpened() {
+    setOpenedCount(c => c + 1);
+    linkJustClicked.current = true;
+    setTimeout(() => { linkJustClicked.current = false; }, 3000);
+  }
+
+  // ── visibilitychange: lock only when user intentionally leaves ───────────────
+  useEffect(() => {
+    function handleVisibility() {
+      if (document.hidden && !linkJustClicked.current) {
+        markAssessmentBlocked(ME_ID, ME_NAME, task.id, task.labelEn, date);
+        setBlocked(true);
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [task.id, date]);
+
+  // ── beforeunload: browser-native warning dialog ──────────────────────────────
+  useEffect(() => {
+    function handleBeforeUnload(e: BeforeUnloadEvent) {
+      e.preventDefault();
+      e.returnValue = "Complete this assessment before leaving — closing the tab will prevent submission.";
+      return e.returnValue;
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, []);
+
+  const canSubmit = !blocked && note.trim().length > 0 && allItemsOpened;
+
+  function handleSubmit() {
+    if (!canSubmit) return;
+    addCustomTaskCompletion({ taskId: task.id, employeeId: ME_ID, date, note: note.trim(), wasBlocked: false, durationSeconds: Math.round((Date.now() - startedAt.current) / 1000) });
+    onDone();
+  }
+
+  return (
+    // Fullscreen non-dismissable overlay — no X button, clicking outside does nothing
+    <div className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-slate-950" role="dialog" aria-modal="true">
+      {/* Top warning bar */}
+      <div className="flex items-start gap-3 bg-amber-500 px-6 py-3 text-white dark:bg-amber-600">
+        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+        <div>
+          <p className="text-sm font-semibold">
+            Do not open other apps or search engines — this will permanently lock your assessment.
+          </p>
+          <p className="mt-0.5 text-xs text-amber-100">
+            Reference links and attachments provided in this task are allowed to open safely.
+          </p>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="flex flex-1 flex-col overflow-y-auto">
+        <div className="mx-auto w-full max-w-2xl px-6 py-10">
+          {/* Header */}
+          <div className="mb-6 flex items-start gap-4">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-950">
+              <Lock className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+            </span>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">Priority Assessment</p>
+              <h1 className="mt-0.5 text-2xl font-semibold text-slate-900 dark:text-white">{task.labelEn}</h1>
+              {task.labelAr && (
+                <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400" dir="rtl">{task.labelAr}</p>
+              )}
+            </div>
+          </div>
+
+          {task.description && (
+            <div className="mb-4 rounded-2xl border border-[#DCE9E6] bg-[#F5F8F7] px-5 py-4 dark:border-slate-700 dark:bg-slate-900">
+              <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Instructions</p>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{task.description}</p>
+            </div>
+          )}
+
+          <div className="mb-6">
+            <TaskResources task={task} onItemOpened={onItemOpened} />
+            {!allItemsOpened && totalItems > 0 && !blocked && (
+              <p className="mt-2 text-xs font-semibold text-amber-600 dark:text-amber-400">
+                Open all reference materials ({openedCount}/{totalItems}) before submitting.
+              </p>
+            )}
+          </div>
+
+          {/* Blocked state */}
+          {blocked ? (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-6 py-8 text-center dark:border-rose-900 dark:bg-rose-950/40">
+              <Lock className="mx-auto mb-3 h-8 w-8 text-rose-500" />
+              <p className="text-lg font-semibold text-rose-700 dark:text-rose-300">Assessment Locked</p>
+              <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">
+                You left this screen while the assessment was open. This session cannot be submitted.
+              </p>
+              <p className="mt-3 text-xs text-rose-500">Contact your manager to have this task reassigned.</p>
+            </div>
+          ) : mode === null ? (
+            /* Voice / text mode selector */
+            <div className="space-y-4">
+              <p className="text-sm text-slate-500 dark:text-slate-400">How would you like to complete this assessment?</p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <button onClick={() => setMode("text")} className="flex flex-col items-center gap-3 rounded-2xl border-2 border-[#DCE9E6] bg-white p-6 text-center transition hover:border-[#0B4F4B] hover:bg-[#E8F3F1] dark:border-slate-700 dark:bg-slate-900 dark:hover:border-[#2E7D76] dark:hover:bg-[#0B2927]">
+                  <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[#E8F3F1] dark:bg-[#0B2927]">
+                    <svg className="h-6 w-6 text-[#0B4F4B] dark:text-[#8FD4C6]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                  </span>
+                  <div><p className="font-semibold text-slate-900 dark:text-white">Type answer</p><p className="mt-1 text-xs text-slate-400">Write your response</p></div>
+                </button>
+                <button onClick={() => setMode("voice")} className="flex flex-col items-center gap-3 rounded-2xl border-2 border-[#DCE9E6] bg-white p-6 text-center transition hover:border-[#0B4F4B] hover:bg-[#E8F3F1] dark:border-slate-700 dark:bg-slate-900 dark:hover:border-[#2E7D76] dark:hover:bg-[#0B2927]">
+                  <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[#E8F3F1] dark:bg-[#0B2927]"><Mic className="h-6 w-6 text-[#0B4F4B] dark:text-[#8FD4C6]" /></span>
+                  <div><p className="font-semibold text-slate-900 dark:text-white">Voice Note</p><p className="mt-1 text-xs text-slate-400">Record in Arabic or English</p></div>
+                </button>
+              </div>
+            </div>
+          ) : mode === "voice" ? (
+            <VoiceRecorderPanel
+              onTranscript={(text) => {
+                addCustomTaskCompletion({ taskId: task.id, employeeId: ME_ID, date, note: text, wasBlocked: false, durationSeconds: Math.round((Date.now() - startedAt.current) / 1000) });
+                onDone();
+              }}
+              canSave={allItemsOpened}
+              onCancel={() => setMode(null)}
+            />
+          ) : (
+            <div className="space-y-4">
+              {task.allowVoice && (
+                <button onClick={() => setMode(null)} className="flex items-center gap-1 text-xs font-semibold text-slate-400 hover:text-[#0B4F4B] dark:hover:text-[#8FD4C6]">← Change method</button>
+              )}
+              <div>
+                <label className={labelCls}>Your answer / completion note *</label>
+                <textarea
+                  rows={6}
+                  value={note}
+                  onChange={e => setNote(e.target.value)}
+                  placeholder="Write your response here — answer from memory, do not search or use AI…"
+                  className={`${inputCls} resize-none`}
+                  autoFocus
+                />
+                <p className="mt-1.5 text-xs text-slate-400">
+                  Stay on this screen. Switching tabs or apps will permanently lock this assessment.
+                </p>
+              </div>
+              <Button className="w-full py-3 text-base" onClick={handleSubmit} disabled={!canSubmit}>
+                <Check className="h-5 w-5" /> Submit Assessment
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main workspace ────────────────────────────────────────────────────────────
-type ModalType = "ads" | "knowledge" | "calls" | "rotation" | "request" | null;
+type ModalType = "ads" | "knowledge" | "calls" | "rotation" | "request" | "meeting" | null;
 
 type LiveData = {
   requests: CRMRequest[];
   adsTask: DailyTask | undefined;
-  knowledgeTask: DailyTask | undefined;
+  knowledgeCount: number;
   callsTask: DailyTask | undefined;
   rotationTask: DailyTask | undefined;
   meetingsToday: number;
+  todayVisits: VisitRequest[];
+  extraTasks: ExtraTask[];
 };
 
 const EMPTY_LIVE: LiveData = {
-  requests: [], adsTask: undefined, knowledgeTask: undefined,
-  callsTask: undefined, rotationTask: undefined, meetingsToday: 0,
+  requests: [], adsTask: undefined, knowledgeCount: 0,
+  callsTask: undefined, rotationTask: undefined, meetingsToday: 0, todayVisits: [], extraTasks: [],
 };
 
 export function CRMTasksWorkspace() {
   const [today] = useState(todayISO);
   const [modal, setModal] = useState<ModalType>(null);
+  const [customTaskModal, setCustomTaskModal] = useState<string | null>(null); // custom task ID
   const [ready, setReady] = useState(false);
   const [live, setLive] = useState<LiveData>(EMPTY_LIVE);
+  const [cfg, setCfg] = useState<CRMTasksConfig | null>(null);
 
   useEffect(() => {
     function refresh() {
       setLive({
         requests: requestsForEmployeeOnDate(ME_ID, today),
         adsTask: taskForEmployeeOnDate(ME_ID, today, "ads"),
-        knowledgeTask: taskForEmployeeOnDate(ME_ID, today, "knowledge"),
+        knowledgeCount: tasksCountForEmployeeOnDate(ME_ID, today, "knowledge"),
         callsTask: taskForEmployeeOnDate(ME_ID, today, "calls"),
         rotationTask: taskForEmployeeOnDate(ME_ID, today, "rotation"),
         meetingsToday: countMeetingsToday(today),
+        todayVisits: loadRequests().visits.filter(v => v.employeeName === ME_NAME && v.date === today),
+        extraTasks: extraTasksForEmployee(ME_ID).filter(t => t.assignedDate === today),
       });
+      setCfg(loadCRMTaskConfig());
       setReady(true);
     }
     refresh();
-    return onCRMChanged(refresh);
+    const unsubCRM = onCRMChanged(refresh);
+    const unsubCfg = onCRMTaskConfigChanged(() => setCfg(loadCRMTaskConfig()));
+    const unsubReq = onRequestsChanged(refresh);
+    return () => { unsubCRM(); unsubCfg(); unsubReq(); };
   }, [today]);
 
-  if (!ready) return null;
+  if (!ready || !cfg) return null;
 
-  const { requests, adsTask, knowledgeTask, callsTask, rotationTask, meetingsToday } = live;
+  const { requests, adsTask, knowledgeCount, callsTask, rotationTask, meetingsToday, todayVisits, extraTasks } = live;
+  const knowledgeDone = knowledgeCount >= cfg.knowledgeTarget;
 
-  const tasks = [
-    {
+  // Custom tasks that apply today come FIRST (highest priority)
+  const todayCustomTasks = cfg.customTasks.filter(t => customTaskAppliesToDate(t, today));
+
+  const allTasks = [
+    // Priority custom tasks first
+    ...todayCustomTasks.map((t, i) => {
+      const completion = getCustomTaskCompletion(ME_ID, t.id, today);
+      return {
+        key: `custom-${t.id}` as ModalType,
+        num: i + 1,
+        title: t.labelEn,
+        desc: t.description || t.labelAr,
+        done: !!completion,
+        completedAt: completion?.completedAt,
+        dueTime: t.dueTime,
+        priority: true,
+        lockMode: !!t.lockMode,
+        customId: t.id,
+      };
+    }),
+    // Then built-in tasks
+    cfg.ads.enabled && {
       key: "ads" as const,
-      num: 1,
+      num: todayCustomTasks.length + 1,
       title: "Ads & WhatsApp Campaign",
-      desc: "Submit 3 social media links posted today",
+      desc: `Submit ${cfg.ads.linkCount} social media link${cfg.ads.linkCount > 1 ? "s" : ""} posted today`,
       done: !!adsTask,
       completedAt: adsTask?.completedAt,
+      priority: false,
+      lockMode: false,
+      customId: undefined as string | undefined,
     },
-    {
+    cfg.knowledge.enabled && {
       key: "knowledge" as const,
-      num: 2,
-      title: "Knowledge",
-      desc: "Complete a project assessment form",
-      done: !!knowledgeTask,
-      completedAt: knowledgeTask?.completedAt,
+      num: todayCustomTasks.length + 2,
+      title: "Projects in Market",
+      desc: knowledgeCount > 0
+        ? knowledgeCount >= cfg.knowledgeTarget
+          ? `${knowledgeCount} assessment${knowledgeCount !== 1 ? "s" : ""} submitted`
+          : `${knowledgeCount}/${cfg.knowledgeTarget} assessments submitted`
+        : `Complete ${cfg.knowledgeTarget} project assessment${cfg.knowledgeTarget !== 1 ? "s" : ""}`,
+      done: knowledgeDone,
+      completedAt: knowledgeDone ? new Date().toISOString() : undefined,
+      priority: false,
+      lockMode: false,
+      customId: undefined as string | undefined,
     },
-    {
+    cfg.calls.enabled && {
       key: "calls" as const,
-      num: 3,
+      num: todayCustomTasks.length + 3,
       title: "Calls",
       desc: "Log your call activity by category",
       done: !!callsTask,
       completedAt: callsTask?.completedAt,
+      priority: false,
+      lockMode: false,
+      customId: undefined as string | undefined,
     },
-    {
+    cfg.rotation.enabled && {
       key: "rotation" as const,
-      num: 4,
+      num: todayCustomTasks.length + 4,
       title: "Rotation",
       desc: "Log team rotation and add notes",
       done: !!rotationTask,
       completedAt: rotationTask?.completedAt,
+      priority: false,
+      lockMode: false,
+      customId: undefined as string | undefined,
     },
-  ];
+  ].filter(Boolean) as { key: ModalType; num: number; title: string; desc: string; done: boolean; completedAt?: string; dueTime?: string; priority: boolean; lockMode: boolean; customId?: string }[];
 
+  const tasks = allTasks;
   const doneCount = tasks.filter(t => t.done).length;
 
   return (
@@ -668,30 +1216,30 @@ export function CRMTasksWorkspace() {
         <div className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Requests today</p>
           <p className="mt-2 text-3xl font-semibold text-slate-950 dark:text-white">
-            {requests.length}<span className="text-lg font-normal text-slate-400">/{DAILY_REQUESTS_TARGET}</span>
+            {requests.length}<span className="text-lg font-normal text-slate-400">/{cfg.requestsTarget}</span>
           </p>
           <div className="mt-3 flex items-center justify-between">
-            <Badge tone={requests.length >= DAILY_REQUESTS_TARGET ? "success" : requests.length > 0 ? "warning" : "default"}>
-              {requests.length >= DAILY_REQUESTS_TARGET ? "On target" : requests.length > 0 ? "In progress" : "Not started"}
+            <Badge tone={requests.length >= cfg.requestsTarget ? "success" : requests.length > 0 ? "warning" : "default"}>
+              {requests.length >= cfg.requestsTarget ? "On target" : requests.length > 0 ? "In progress" : "Not started"}
             </Badge>
-            <button onClick={() => setModal("request")} className="flex items-center gap-1 text-xs font-semibold text-[#0B4F4B] transition hover:underline dark:text-[#8FD4C6]">
-              <Plus className="h-3 w-3" /> New
-            </button>
+            <Link href="#requests-section" className="flex items-center gap-1 text-xs font-semibold text-slate-400 transition hover:text-[#0B4F4B] hover:underline dark:hover:text-[#8FD4C6]">
+              View all <ChevronRight className="h-3 w-3" />
+            </Link>
           </div>
         </div>
 
         {/* Meetings card */}
         <div className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Meeting today</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Meetings today</p>
           <p className="mt-2 text-3xl font-semibold text-slate-950 dark:text-white">
-            {meetingsToday}<span className="text-lg font-normal text-slate-400">/1</span>
+            {meetingsToday}<span className="text-lg font-normal text-slate-400">/{cfg.meetingsTarget}</span>
           </p>
           <div className="mt-3 flex items-center justify-between">
-            <Badge tone={meetingsToday >= 1 ? "success" : "default"}>
-              {meetingsToday >= 1 ? "On target" : "Not submitted"}
+            <Badge tone={meetingsToday >= cfg.meetingsTarget ? "success" : meetingsToday > 0 ? "warning" : "default"}>
+              {meetingsToday >= cfg.meetingsTarget ? "On target" : meetingsToday > 0 ? "In progress" : "Not started"}
             </Badge>
-            <Link href="/meetings" className="flex items-center gap-1 text-xs font-semibold text-[#0B4F4B] transition hover:underline dark:text-[#8FD4C6]">
-              Go <ChevronRight className="h-3 w-3" />
+            <Link href="#meetings-section" className="flex items-center gap-1 text-xs font-semibold text-slate-400 transition hover:text-[#0B4F4B] hover:underline dark:hover:text-[#8FD4C6]">
+              View all <ChevronRight className="h-3 w-3" />
             </Link>
           </div>
         </div>
@@ -719,21 +1267,42 @@ export function CRMTasksWorkspace() {
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">Today&apos;s Tasks</h2>
         <div className="overflow-hidden rounded-2xl border border-[#DCE9E6] bg-white dark:border-slate-800 dark:bg-slate-900">
           {tasks.map((task, idx) => (
-            <div key={task.key} className={`flex items-center gap-4 px-5 py-4 ${idx < tasks.length - 1 ? "border-b border-[#DCE9E6] dark:border-slate-800" : ""}`}>
-              <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${task.done ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : "bg-slate-100 text-slate-500 dark:bg-slate-800"}`}>
+            <div key={task.key} className={`flex items-center gap-4 px-5 py-4 ${task.priority && !task.done ? "bg-amber-50 dark:bg-amber-950/20" : ""} ${idx < tasks.length - 1 ? "border-b border-[#DCE9E6] dark:border-slate-800" : ""}`}>
+              <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${task.done ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : task.priority ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300" : "bg-slate-100 text-slate-500 dark:bg-slate-800"}`}>
                 {task.done ? <Check className="h-4 w-4" /> : task.num}
               </div>
               <div className="flex-1 min-w-0">
-                <p className={`text-sm font-semibold ${task.done ? "text-slate-400 line-through" : "text-slate-900 dark:text-white"}`}>{task.title}</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className={`text-sm font-semibold ${task.done ? "text-slate-400 line-through" : "text-slate-900 dark:text-white"}`}>{task.title}</p>
+                  {task.priority && !task.done && (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-950 dark:text-amber-300">Priority</span>
+                  )}
+                  {task.dueTime && !task.done && (
+                    <span className="text-xs font-medium text-rose-500">Due {task.dueTime}</span>
+                  )}
+                </div>
                 <p className="text-xs text-slate-400">
-                  {task.done && task.completedAt ? `Completed at ${completedAt(task.completedAt)}` : task.desc}
+                  {task.key !== "knowledge" && task.done && task.completedAt ? `Completed at ${completedAt(task.completedAt)}` : task.desc}
                 </p>
               </div>
-              <div className="shrink-0">
-                {task.done ? (
-                  <Badge tone="success">Done</Badge>
-                ) : (
-                  <Button size="sm" onClick={() => setModal(task.key)}>
+              <div className="shrink-0 flex items-center gap-2">
+                {task.key === "knowledge" && knowledgeCount > 0 && (
+                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${knowledgeDone ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"}`}>
+                    {knowledgeDone ? knowledgeCount : `${knowledgeCount}/${cfg.knowledgeTarget}`}
+                  </span>
+                )}
+                {task.key === "knowledge" ? (
+                  <Button size="sm" onClick={() => setModal("knowledge")}>
+                    {knowledgeCount > 0 ? "Add more" : "Start"} <ChevronRight className="h-3 w-3" />
+                  </Button>
+                ) : task.done ? null : (
+                  <Button
+                    size="sm"
+                    onClick={() => task.customId ? setCustomTaskModal(task.customId) : setModal(task.key)}
+                    className={task.lockMode ? "border-amber-300 bg-amber-100 text-amber-800 hover:bg-amber-200 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300 dark:hover:bg-amber-900" : ""}
+                    variant={task.lockMode ? "outline" : "default"}
+                  >
+                    {task.lockMode && <Lock className="h-3 w-3" />}
                     Start <ChevronRight className="h-3 w-3" />
                   </Button>
                 )}
@@ -743,13 +1312,60 @@ export function CRMTasksWorkspace() {
         </div>
       </div>
 
-      {/* Today's requests list */}
-      {requests.length > 0 && (
-        <div>
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">Today&apos;s Requests</h2>
-          <div className="space-y-3">
+      {/* Admin-assigned extra tasks */}
+      {extraTasks.length > 0 && (
+        <div className="overflow-hidden rounded-2xl border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30">
+          <div className="border-b border-amber-200 px-5 py-3 dark:border-amber-800">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-700 dark:text-amber-400">Assigned by Admin</p>
+          </div>
+          <div className="divide-y divide-amber-100 dark:divide-amber-900">
+            {extraTasks.map(et => (
+              <div key={et.id} className="flex items-start gap-4 px-5 py-4">
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-slate-900 dark:text-white">{et.note}</p>
+                  {et.deductionDays > 0 && (
+                    <p className="mt-0.5 text-xs font-semibold text-rose-500">Deduction: {et.deductionDays} day(s)</p>
+                  )}
+                  {et.acknowledged && (
+                    <p className="mt-0.5 text-xs text-emerald-600 dark:text-emerald-400">✓ Acknowledged</p>
+                  )}
+                </div>
+                {!et.acknowledged && (
+                  <Button size="sm" onClick={() => { acknowledgeExtraTask(et.id); setLive(prev => ({ ...prev, extraTasks: prev.extraTasks.map(t => t.id === et.id ? { ...t, acknowledged: true } : t) })); }}>
+                    Acknowledge
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Requests & Meetings unified card */}
+      <div className="overflow-hidden rounded-2xl border border-[#DCE9E6] bg-white dark:border-slate-800 dark:bg-slate-900">
+
+        {/* ── Requests section ── */}
+        <div className="flex items-center justify-between px-5 pt-4 pb-3">
+          <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+            Today&apos;s Requests
+            <span className="ml-2 rounded-full bg-[#E8F3F1] px-2 py-0.5 text-[10px] font-bold text-[#0B4F4B] dark:bg-[#0B2927] dark:text-[#8FD4C6]">
+              {requests.length}/{cfg.requestsTarget}
+            </span>
+          </h2>
+          <button onClick={() => setModal("request")} className="flex items-center gap-1 text-xs font-semibold text-[#0B4F4B] hover:underline dark:text-[#8FD4C6]">
+            <Plus className="h-3 w-3" /> New
+          </button>
+        </div>
+        {requests.length === 0 ? (
+          <div className="px-5 pb-5 text-center">
+            <p className="text-sm text-slate-400">No requests submitted yet today.</p>
+            <p className="mt-0.5 text-xs text-slate-400">Target: {cfg.requestsTarget} per day</p>
+            <Button size="sm" className="mt-3" onClick={() => setModal("request")}><Plus className="h-3.5 w-3.5" /> Submit First Request</Button>
+          </div>
+        ) : (
+          <div className="space-y-2 px-4 pb-4">
             {requests.map((req, idx) => (
-              <div key={req.id} className="rounded-2xl border border-[#DCE9E6] bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+              <div key={req.id} className="rounded-xl border border-[#DCE9E6] bg-[#F5F8F7] p-3 dark:border-slate-700 dark:bg-slate-800">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-xs text-slate-400">Request #{idx + 1}</p>
@@ -765,27 +1381,59 @@ export function CRMTasksWorkspace() {
               </div>
             ))}
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Add request CTA if none yet */}
-      {requests.length === 0 && (
-        <div className="rounded-2xl border border-dashed border-[#DCE9E6] bg-white p-8 text-center dark:border-slate-700 dark:bg-slate-900">
-          <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">No requests submitted yet today</p>
-          <p className="mt-1 text-sm text-slate-400">Your target is {DAILY_REQUESTS_TARGET} client requests per day.</p>
-          <Button className="mt-4" onClick={() => setModal("request")}><Plus className="h-4 w-4" /> Submit First Request</Button>
+        {/* ── Divider ── */}
+        <div className="border-t border-[#DCE9E6] dark:border-slate-700" />
+
+        {/* ── Meetings section ── */}
+        <div className="flex items-center justify-between px-5 pt-4 pb-3">
+          <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+            Today&apos;s Meetings
+            <span className="ml-2 rounded-full bg-[#E8F3F1] px-2 py-0.5 text-[10px] font-bold text-[#0B4F4B] dark:bg-[#0B2927] dark:text-[#8FD4C6]">
+              {todayVisits.length}/{cfg.meetingsTarget}
+            </span>
+          </h2>
+          <button onClick={() => setModal("meeting")} className="flex items-center gap-1 text-xs font-semibold text-[#0B4F4B] hover:underline dark:text-[#8FD4C6]">
+            <Plus className="h-3 w-3" /> New
+          </button>
         </div>
-      )}
+        {todayVisits.length === 0 ? (
+          <div className="px-5 pb-5 text-center">
+            <p className="text-sm text-slate-400">No meetings logged yet today.</p>
+            <p className="mt-0.5 text-xs text-slate-400">Target: {cfg.meetingsTarget} per day</p>
+            <Button size="sm" className="mt-3" onClick={() => setModal("meeting")}><Plus className="h-3.5 w-3.5" /> Log First Meeting</Button>
+          </div>
+        ) : (
+          <div className="space-y-2 px-4 pb-4">
+            {todayVisits.map((v, idx) => (
+              <div key={v.id} className="rounded-xl border border-[#DCE9E6] bg-[#F5F8F7] p-3 dark:border-slate-700 dark:bg-slate-800">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs text-slate-400">Meeting #{idx + 1} · {v.time}</p>
+                    <p className="font-semibold text-slate-900 dark:text-white">{v.clientName}</p>
+                    <p className="text-xs text-slate-500">{v.projectName}{v.meetingLocation ? ` · ${v.meetingLocation}` : ""}</p>
+                  </div>
+                  <span className={`mt-0.5 shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold ${v.status === "approved" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : v.status === "rejected" ? "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300" : "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"}`}>
+                    {v.status === "approved" ? "Approved" : v.status === "rejected" ? "Rejected" : "Pending"}
+                  </span>
+                </div>
+                {v.notes && <p className="mt-2 border-t border-[#DCE9E6] pt-2 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400">{v.notes}</p>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Modals */}
       {modal === "ads" && (
         <Modal title="Ads & WhatsApp Campaign" onClose={() => setModal(null)}>
-          <AdsTaskForm date={today} onDone={() => setModal(null)} />
+          <AdsTaskForm date={today} onDone={() => setModal(null)} linkCount={cfg.ads.linkCount} />
         </Modal>
       )}
       {modal === "knowledge" && (
-        <Modal title="Knowledge — Project Assessment" onClose={() => setModal(null)}>
-          <KnowledgeTaskForm date={today} onDone={() => setModal(null)} />
+        <Modal title="Projects in Market" onClose={() => setModal(null)}>
+          <KnowledgeTaskForm date={today} onDone={() => setModal(null)} fieldCfg={cfg.knowledge.fields} />
         </Modal>
       )}
       {modal === "calls" && (
@@ -803,6 +1451,31 @@ export function CRMTasksWorkspace() {
           <RequestForm date={today} onDone={() => setModal(null)} onCancel={() => setModal(null)} />
         </Modal>
       )}
+      {modal === "meeting" && (
+        <Modal title="Log a Meeting" onClose={() => setModal(null)}>
+          <MeetingForm date={today} onDone={() => setModal(null)} onCancel={() => setModal(null)} />
+        </Modal>
+      )}
+
+      {/* Custom task modals */}
+      {customTaskModal && (() => {
+        const task = cfg.customTasks.find(t => t.id === customTaskModal);
+        if (!task) return null;
+        if (task.lockMode) {
+          return (
+            <PriorityAssessmentModal
+              task={task}
+              date={today}
+              onDone={() => { setCustomTaskModal(null); }}
+            />
+          );
+        }
+        return (
+          <Modal title={task.labelEn} onClose={() => setCustomTaskModal(null)}>
+            <CustomTaskAckModal task={task} date={today} onDone={() => setCustomTaskModal(null)} />
+          </Modal>
+        );
+      })()}
     </div>
   );
 }

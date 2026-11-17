@@ -25,19 +25,26 @@ export interface AdsTaskData {
 export interface ProjectAssessment {
   salesName: string;
   date: string;
-  companyName: string;
   projectName: string;
-  managementAndOperations: string;
-  owner: string;
-  investorType: string;
+  companyName: string;
   previousWork: string;
   location: string;
-  projectArea: string;
-  finishingType: string;
-  projectDetails: string;
+  projectArea: string;          // Project Acres
+  projectDetails: string;       // Project Details & Facilities
   unitTypes: string;
-  maintenance: string;
+  pricesAndAcres: string;
+  paymentPlan: string;
+  finishingType: string;        // dropdown
+  construction: string;         // dropdown
   deliveryDate: string;
+  maintenance: string;
+  investorType: string;         // Engineering Consultant
+  managementAndOperations: string;
+  termsOfContract: string;
+  sellingPoints: string;
+  weaknessPoints: string;
+  additionalNotes: string;
+  owner: string;
 }
 
 export interface KnowledgeTaskData {
@@ -67,6 +74,7 @@ export interface DailyTask {
   date: string; // YYYY-MM-DD
   taskType: DailyTaskType;
   completedAt: string; // ISO
+  durationSeconds?: number; // start-to-submit duration
   data: AdsTaskData | KnowledgeTaskData | CallsTaskData | RotationTaskData;
 }
 
@@ -93,12 +101,24 @@ export interface CRMDeduction {
   extraTaskId: string;
 }
 
+export interface CustomTaskCompletion {
+  id: string;
+  taskId: string;
+  employeeId: string;
+  date: string;        // YYYY-MM-DD
+  note: string;
+  completedAt: string; // ISO
+  durationSeconds?: number; // start-to-submit duration
+  wasBlocked: boolean; // true if user switched tabs during assessment
+}
+
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
 const REQUESTS_KEY = "opshub-crm-requests-v1";
 const TASKS_KEY = "opshub-crm-daily-tasks-v1";
 const EXTRA_TASKS_KEY = "opshub-crm-extra-tasks-v1";
 const DEDUCTIONS_KEY = "opshub-crm-deductions-v1";
+const CUSTOM_COMPLETIONS_KEY = "opshub-crm-custom-completions-v1";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -158,6 +178,14 @@ export function taskForEmployeeOnDate(employeeId: string, date: string, type: Da
   return loadDailyTasks().find(t => t.employeeId === employeeId && t.date === date && t.taskType === type);
 }
 
+export function tasksCountForEmployeeOnDate(employeeId: string, date: string, type: DailyTaskType): number {
+  return loadDailyTasks().filter(t => t.employeeId === employeeId && t.date === date && t.taskType === type).length;
+}
+
+export function tasksForEmployeeOnDate(employeeId: string, date: string, type: DailyTaskType): DailyTask[] {
+  return loadDailyTasks().filter(t => t.employeeId === employeeId && t.date === date && t.taskType === type);
+}
+
 export function tasksForDate(date: string): DailyTask[] {
   return loadDailyTasks().filter(t => t.date === date);
 }
@@ -202,6 +230,50 @@ export function extraTasksForEmployee(employeeId: string): ExtraTask[] {
   return loadExtraTasks().filter(t => t.targetEmployeeId === employeeId);
 }
 
+// ── Assessment locks (persisted so reopening still shows locked) ──────────────
+
+const ASSESSMENT_LOCKS_KEY = "opshub-assessment-locks-v1";
+
+export interface AssessmentLock {
+  employeeId: string;
+  employeeName: string;
+  taskId: string;
+  taskLabel: string;
+  date: string;
+  lockedAt: string; // ISO
+}
+
+export function loadAssessmentLocks(): AssessmentLock[] { return readJson<AssessmentLock>(ASSESSMENT_LOCKS_KEY); }
+
+export function markAssessmentBlocked(employeeId: string, employeeName: string, taskId: string, taskLabel: string, date: string): void {
+  const all = loadAssessmentLocks();
+  const exists = all.some(l => l.employeeId === employeeId && l.taskId === taskId && l.date === date);
+  if (!exists) writeJson(ASSESSMENT_LOCKS_KEY, [...all, { employeeId, employeeName, taskId, taskLabel, date, lockedAt: new Date().toISOString() }]);
+}
+
+export function isAssessmentBlocked(employeeId: string, taskId: string, date: string): boolean {
+  return loadAssessmentLocks().some(l => l.employeeId === employeeId && l.taskId === taskId && l.date === date);
+}
+
+export function unlockAssessment(employeeId: string, taskId: string, date: string): void {
+  writeJson(ASSESSMENT_LOCKS_KEY, loadAssessmentLocks().filter(l => !(l.employeeId === employeeId && l.taskId === taskId && l.date === date)));
+}
+
+// ── Custom Task Completions ───────────────────────────────────────────────────
+
+export function loadCustomTaskCompletions(): CustomTaskCompletion[] { return readJson<CustomTaskCompletion>(CUSTOM_COMPLETIONS_KEY); }
+
+export function addCustomTaskCompletion(data: Omit<CustomTaskCompletion, "id" | "completedAt">): CustomTaskCompletion {
+  const rec: CustomTaskCompletion = { ...data, id: uid(), completedAt: new Date().toISOString() };
+  writeJson(CUSTOM_COMPLETIONS_KEY, [...loadCustomTaskCompletions(), rec]);
+  notify();
+  return rec;
+}
+
+export function getCustomTaskCompletion(employeeId: string, taskId: string, date: string): CustomTaskCompletion | undefined {
+  return loadCustomTaskCompletions().find(c => c.employeeId === employeeId && c.taskId === taskId && c.date === date);
+}
+
 // ── CRM Deductions ────────────────────────────────────────────────────────────
 
 export function loadCRMDeductions(): CRMDeduction[] { return readJson<CRMDeduction>(DEDUCTIONS_KEY); }
@@ -242,15 +314,18 @@ export function isValidSocialUrl(url: string): boolean {
 
 // ── Performance helpers ───────────────────────────────────────────────────────
 
-export const DAILY_REQUESTS_TARGET = 3;
-export const DAILY_MEETING_TARGET = 1;
+export const DAILY_REQUESTS_TARGET = 3; // legacy default — prefer config value
+export const DAILY_MEETING_TARGET = 1;  // legacy default — prefer config value
 
 export interface DayPerformance {
   date: string;
   requestsCount: number;
   requestsTarget: number;
+  meetingsCount: number;
   meetingsDone: boolean;
   adsTaskDone: boolean;
+  knowledgeCount: number;
+  knowledgeTarget: number;
   knowledgeTaskDone: boolean;
   callsTaskDone: boolean;
   rotationTaskDone: boolean;
@@ -258,21 +333,32 @@ export interface DayPerformance {
   deductions: CRMDeduction[];
 }
 
-export function getDayPerformance(employeeId: string, date: string, meetingCountFn: (date: string) => number): DayPerformance {
+export function getDayPerformance(
+  employeeId: string,
+  date: string,
+  meetingCountFn: (date: string) => number,
+  requestsTarget = DAILY_REQUESTS_TARGET,
+  meetingsTarget = DAILY_MEETING_TARGET,
+  knowledgeTarget = 1,
+): DayPerformance {
   const requests = requestsForEmployeeOnDate(employeeId, date);
   const ads = taskForEmployeeOnDate(employeeId, date, "ads");
-  const knowledge = taskForEmployeeOnDate(employeeId, date, "knowledge");
+  const knowledgeCount = tasksCountForEmployeeOnDate(employeeId, date, "knowledge");
   const calls = taskForEmployeeOnDate(employeeId, date, "calls");
   const rotation = taskForEmployeeOnDate(employeeId, date, "rotation");
   const extraTasks = loadExtraTasks().filter(t => t.targetEmployeeId === employeeId && t.assignedDate === date);
   const deductions = loadCRMDeductions().filter(d => d.employeeId === employeeId && d.date === date);
+  const meetingsCount = meetingCountFn(date);
   return {
     date,
     requestsCount: requests.length,
-    requestsTarget: DAILY_REQUESTS_TARGET,
-    meetingsDone: meetingCountFn(date) >= DAILY_MEETING_TARGET,
+    requestsTarget,
+    meetingsCount,
+    meetingsDone: meetingsCount >= meetingsTarget,
     adsTaskDone: !!ads,
-    knowledgeTaskDone: !!knowledge,
+    knowledgeCount,
+    knowledgeTarget,
+    knowledgeTaskDone: knowledgeCount >= knowledgeTarget,
     callsTaskDone: !!calls,
     rotationTaskDone: !!rotation,
     extraTasks,
@@ -281,14 +367,20 @@ export function getDayPerformance(employeeId: string, date: string, meetingCount
 }
 
 export const LEAD_SOURCES = [
+  "Fresh Lead",
   "Social Media",
   "WhatsApp Campaign",
   "Referral",
   "Walk-in",
-  "Website",
   "Cold Call",
-  "Print / Outdoor Ad",
   "Exhibition / Event",
   "Previous Client",
   "Other",
+];
+
+export const LEAD_SOURCE_GROUPS: { label: string; options: string[] }[] = [
+  { label: "Direct Outreach", options: ["Fresh Lead", "Cold Call", "Walk-in"] },
+  { label: "Digital", options: ["Social Media", "WhatsApp Campaign"] },
+  { label: "Relationships", options: ["Referral", "Previous Client"] },
+  { label: "Other", options: ["Exhibition / Event", "Other"] },
 ];
