@@ -41,7 +41,7 @@ export function AdminPanel() {
     <div>
       {/* Tab bar */}
       <div className="mb-6 flex max-w-full gap-1 overflow-x-auto rounded-2xl border border-[#DCE9E6] bg-white p-1 shadow-sm dark:border-slate-800 dark:bg-slate-900 w-fit">
-        {([["office-schedule", "Office & Schedule"], ["zones", "Zones"], ["attendance", "Attendance locks"], ["permissions", "Role permissions"], ["assessment-locks", "Assessment locks"], ["meetings", "Meetings"], ["knowledge-submissions", "Knowledge"]] as [Tab, string][]).map(([key, label]) => (
+        {([["office-schedule", "Office & Schedule"], ["zones", "Zones"], ["attendance", "Attendance locks"], ["permissions", "Role permissions"], ["assessment-locks", "Assessment locks"], ["meetings", "Meetings"], ["knowledge-submissions", "Projects in Market"]] as [Tab, string][]).map(([key, label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}

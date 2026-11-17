@@ -522,7 +522,7 @@ function KnowledgeTaskCard({ employeeId, employeeName, date, onDone }: { employe
               <BookOpen className="h-5 w-5 text-[#0B4F4B] dark:text-[#8FD4C6]" />
             </div>
             <div>
-              <p className="font-semibold text-slate-900 dark:text-white">Knowledge — Project Assessment</p>
+              <p className="font-semibold text-slate-900 dark:text-white">Projects in Market</p>
               <TaskBadge done={true} />
             </div>
           </div>
@@ -572,7 +572,7 @@ function KnowledgeTaskCard({ employeeId, employeeName, date, onDone }: { employe
             <BookOpen className="h-5 w-5 text-[#0B4F4B] dark:text-[#8FD4C6]" />
           </div>
           <div className="text-left">
-            <p className="font-semibold text-slate-900 dark:text-white">Knowledge — Project Assessment</p>
+            <p className="font-semibold text-slate-900 dark:text-white">Projects in Market</p>
             <TaskBadge done={false} />
           </div>
         </div>
@@ -607,7 +607,7 @@ function KnowledgeTaskCard({ employeeId, employeeName, date, onDone }: { employe
           <div className="flex justify-end">
             <Btn onClick={submit} disabled={!canSubmit || saving}>
               {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-              Submit Knowledge Task
+              Submit Assessment
             </Btn>
           </div>
         </div>
@@ -637,7 +637,7 @@ function MyTasksTab({ employeeId, employeeName, date }: { employeeId: string; em
       {/* Summary bar */}
       <div className="grid gap-3 sm:grid-cols-4">
         <Stat label="Ads Task" value={adsTask ? "✓ Done" : "Pending"} tone={adsTask ? "good" : "warn"} />
-        <Stat label="Knowledge" value={knowledgeTask ? "✓ Done" : "Pending"} tone={knowledgeTask ? "good" : "warn"} />
+        <Stat label="Projects in Market" value={knowledgeTask ? "✓ Done" : "Pending"} tone={knowledgeTask ? "good" : "warn"} />
         <Stat label="Requests" value={`${myRequests.length} / ${DAILY_REQUESTS_TARGET}`} sub="today" tone={reqsDone ? "good" : "warn"} />
         <Stat label="Meeting" value={`${myMeetings} / ${DAILY_MEETING_TARGET}`} sub="submitted" tone={meetDone ? "good" : "warn"} />
       </div>
@@ -904,7 +904,7 @@ function PerformanceTab() {
           </div>
           <div className="grid gap-3 sm:grid-cols-4">
             <Stat label="Ads Task" value={dayPerf.adsTaskDone ? "Done" : "Missing"} tone={dayPerf.adsTaskDone ? "good" : "warn"} />
-            <Stat label="Knowledge" value={dayPerf.knowledgeTaskDone ? "Done" : "Missing"} tone={dayPerf.knowledgeTaskDone ? "good" : "warn"} />
+            <Stat label="Projects in Market" value={dayPerf.knowledgeTaskDone ? "Done" : "Missing"} tone={dayPerf.knowledgeTaskDone ? "good" : "warn"} />
             <Stat label="Requests" value={`${dayPerf.requestsCount} / ${DAILY_REQUESTS_TARGET}`} tone={dayPerf.requestsCount >= DAILY_REQUESTS_TARGET ? "good" : "warn"} />
             <Stat label="Meeting" value={dayPerf.meetingsDone ? "Done" : "Missing"} tone={dayPerf.meetingsDone ? "good" : "warn"} />
           </div>
@@ -980,7 +980,7 @@ function PerformanceTab() {
                     "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
                     isToday && "ring-2 ring-[#0B4F4B]",
                   )}
-                  title={`${p.date}: Requests ${p.requestsCount}/${DAILY_REQUESTS_TARGET}, Ads ${p.adsTaskDone ? "✓" : "✗"}, Knowledge ${p.knowledgeTaskDone ? "✓" : "✗"}, Meeting ${p.meetingsDone ? "✓" : "✗"}`}
+                  title={`${p.date}: Requests ${p.requestsCount}/${DAILY_REQUESTS_TARGET}, Ads ${p.adsTaskDone ? "✓" : "✗"}, Projects in Market ${p.knowledgeTaskDone ? "✓" : "✗"}, Meeting ${p.meetingsDone ? "✓" : "✗"}`}
                 >
                   {i + 1}
                   {hasDeduction && <span className="text-[9px] text-red-600">-{p.deductions.reduce((s, d) => s + d.deductionDays, 0)}d</span>}

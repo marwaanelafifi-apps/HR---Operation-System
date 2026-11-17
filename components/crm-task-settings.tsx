@@ -254,7 +254,7 @@ export function CRMTaskSettings() {
 
       {/* ── Knowledge fields ──────────────────────────────────────────────── */}
       {config.knowledge.enabled && (
-        <SectionCard title="Knowledge — Project Assessment Fields">
+        <SectionCard title="Projects in Market — Assessment Fields">
           <p className="mb-4 text-sm text-slate-500">Toggle fields on or off and edit their labels. Disabled fields are hidden from both the form and the voice reference card.</p>
           <div className="space-y-2">
             {config.knowledge.fields.map((f, idx) => (

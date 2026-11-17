@@ -388,7 +388,7 @@ function MonthView({ emp, year, month, onDayClick }: { emp: typeof SALES_EMPLOYE
                         </span>
                       </div>
                       <div className="flex items-center gap-1">
-                        <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                        <span title="Projects in Market" className="h-1.5 w-1.5 rounded-full bg-amber-500" />
                         <span className={`text-[10px] font-semibold leading-none ${perf.knowledgeTaskDone ? "text-amber-700 dark:text-amber-400" : perf.knowledgeCount > 0 ? "text-amber-600 dark:text-amber-400" : "text-slate-400"}`}>
                           {perf.knowledgeCount}/{perf.knowledgeTarget}
                         </span>
@@ -413,7 +413,7 @@ function MonthView({ emp, year, month, onDayClick }: { emp: typeof SALES_EMPLOYE
         {[
           { color: "bg-emerald-500", label: "Requests" },
           { color: "bg-blue-500", label: "Meetings" },
-          { color: "bg-amber-500", label: "Knowledge" },
+          { color: "bg-amber-500", label: "Projects in Market" },
           { color: "bg-purple-500", label: "Ads ✓" },
           { color: "bg-sky-500", label: "Calls ✓" },
           { color: "bg-teal-500", label: "Rotation ✓" },

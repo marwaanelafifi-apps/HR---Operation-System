@@ -270,7 +270,7 @@ export function CRMHistoryWorkspace() {
   const filterOptions = [
     { value: "all", label: "All tasks" },
     { value: "ads", label: "Ads" },
-    { value: "knowledge", label: "Knowledge" },
+    { value: "knowledge", label: "Projects in Market" },
     { value: "calls", label: "Calls" },
     { value: "rotation", label: "Rotation" },
     { value: "custom", label: "Custom tasks" },
