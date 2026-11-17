@@ -305,9 +305,11 @@ function MonthView({ emp, year, month, onDayClick }: { emp: typeof SALES_EMPLOYE
       return s + n;
     }, 0);
     const tasksTotal = workdays * 4;
+    const knowledgeTotal = days.reduce((s, d) => s + d.knowledgeCount, 0);
+    const knowledgeTarget = workdays * cfg.knowledgeTarget;
     const deductionDays = loadCRMDeductions().filter(d => d.employeeId === emp.id && d.date.startsWith(`${year}-${String(month + 1).padStart(2, "0")}`))
       .reduce((s, d) => s + d.deductionDays, 0);
-    return { workdays, reqTotal, reqTarget, meetingsDone, tasksDone, tasksTotal, deductionDays };
+    return { workdays, reqTotal, reqTarget, meetingsDone, tasksDone, tasksTotal, knowledgeTotal, knowledgeTarget, deductionDays };
   }, [perfByDay, emp, year, month]);
 
   function cellColor(d: number): string {
@@ -327,10 +329,11 @@ function MonthView({ emp, year, month, onDayClick }: { emp: typeof SALES_EMPLOYE
   return (
     <div className="space-y-6">
       {/* Monthly summary */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         {[
           { label: "Requests", value: `${summary.reqTotal}/${summary.reqTarget}`, sub: `${summary.workdays} workdays` },
           { label: "Meetings done", value: `${summary.meetingsDone}/${summary.workdays}`, sub: "days with ≥1 meeting" },
+          { label: "Projects in Market", value: `${summary.knowledgeTotal}/${summary.knowledgeTarget}`, sub: `${Math.round((summary.knowledgeTotal / Math.max(1, summary.knowledgeTarget)) * 100)}% of target` },
           { label: "Tasks completed", value: `${summary.tasksDone}/${summary.tasksTotal}`, sub: `${Math.round((summary.tasksDone / Math.max(1, summary.tasksTotal)) * 100)}% completion` },
           { label: "CRM deductions", value: `${summary.deductionDays}d`, sub: "deducted this month" },
         ].map(({ label, value, sub }) => (
