@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
-import { BarChart3, Bell, Building2, CalendarDays, CheckSquare, ClipboardCheck, Clock3, History, LayoutDashboard, ListChecks, Menu, Moon, Receipt, Settings2, Shield, Sun, UserRound, X } from "lucide-react";
+import { BarChart3, Bell, CalendarDays, CheckSquare, ClipboardCheck, Clock3, History, LayoutDashboard, ListChecks, Menu, Moon, Receipt, Settings2, Shield, Sun, UserRound, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui/avatar";
 
@@ -23,7 +23,6 @@ const groups = [
       { href: "/crm/tasks", label: "Daily Tasks", icon: ListChecks },
       { href: "/crm/history", label: "My History", icon: History },
       { href: "/meetings", label: "Meetings", icon: CalendarDays },
-      { href: "/field-agents", label: "Field activity", icon: Building2 },
       { href: "/crm/performance", label: "Performance", icon: BarChart3 },
     ],
   },
