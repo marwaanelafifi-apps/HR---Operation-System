@@ -180,23 +180,25 @@ function DayPerfCard({ emp, date, onAssignTask }: { emp: typeof SALES_EMPLOYEES[
                     ) : (
                       <div className="space-y-1">
                         {([
-                          ["Project", kd.assessment?.projectName],
-                          ["Company", kd.assessment?.companyName],
+                          ["Project Name", kd.assessment?.projectName],
+                          ["Company Name", kd.assessment?.companyName],
+                          ["Previous Projects / Owner History", kd.assessment?.previousWork],
                           ["Location", kd.assessment?.location],
-                          ["Previous Projects", kd.assessment?.previousWork],
-                          ["Area", kd.assessment?.projectArea],
-                          ["Finishing", kd.assessment?.finishingType],
-                          ["Construction", kd.assessment?.construction],
-                          ["Delivery", kd.assessment?.deliveryDate],
-                          ["Details", kd.assessment?.projectDetails],
-                          ["Units, Areas & Prices", `${kd.assessment?.unitTypes ?? ""}${kd.assessment?.pricesAndAcres ? ` / ${kd.assessment.pricesAndAcres}` : ""}`],
+                          ["Project Acres", kd.assessment?.projectArea],
+                          ["Project Details & Facilities", kd.assessment?.projectDetails],
+                          ["Unit Types", kd.assessment?.unitTypes],
+                          ["Prices & Acres", kd.assessment?.pricesAndAcres],
                           ["Payment Plan", kd.assessment?.paymentPlan],
+                          ["Finishing Type", kd.assessment?.finishingType],
+                          ["Construction", kd.assessment?.construction],
+                          ["Delivery Date", kd.assessment?.deliveryDate],
+                          ["Maintenance", kd.assessment?.maintenance],
+                          ["Engineering Consultant", kd.assessment?.investorType],
+                          ["Management & Operations", kd.assessment?.managementAndOperations],
+                          ["Terms of Operating Contract", kd.assessment?.termsOfContract],
                           ["Selling Points", kd.assessment?.sellingPoints],
                           ["Weakness Points", kd.assessment?.weaknessPoints],
-                          ["Maintenance", kd.assessment?.maintenance],
-                          ["Consultant", kd.assessment?.investorType],
-                          ["Management & Ops", kd.assessment?.managementAndOperations],
-                          ["Notes", kd.assessment?.additionalNotes],
+                          ["Additional Notes", kd.assessment?.additionalNotes],
                         ] as [string, string][]).filter(([, v]) => v).map(([k, v]) => (
                           <div key={k} className="flex gap-2">
                             <span className="shrink-0 font-semibold text-slate-500">{k}:</span>
