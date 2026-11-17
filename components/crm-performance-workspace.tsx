@@ -411,9 +411,9 @@ function MonthView({ emp, year, month, onDayClick }: { emp: typeof SALES_EMPLOYE
       {/* Legend */}
       <div className="flex flex-wrap gap-4 text-xs text-slate-500">
         {[
-          { color: "bg-emerald-500", label: "Requests (count/target)" },
-          { color: "bg-blue-500", label: "Meetings (count)" },
-          { color: "bg-amber-500", label: "Knowledge (count/target)" },
+          { color: "bg-emerald-500", label: "Requests" },
+          { color: "bg-blue-500", label: "Meetings" },
+          { color: "bg-amber-500", label: "Knowledge" },
           { color: "bg-purple-500", label: "Ads ✓" },
           { color: "bg-sky-500", label: "Calls ✓" },
           { color: "bg-teal-500", label: "Rotation ✓" },
