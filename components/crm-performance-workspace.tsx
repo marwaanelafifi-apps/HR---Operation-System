@@ -539,6 +539,160 @@ function AssignTaskModal({ emp, defaultDate, onClose }: { emp: typeof SALES_EMPL
   );
 }
 
+// ── All-employees month summary table ─────────────────────────────────────────
+function AllMonthView({ year, month, onEmpClick }: { year: number; month: number; onEmpClick: (empId: string) => void }) {
+  const today = todayISO();
+  const cfg = loadCRMTaskConfig();
+  const dim = daysInMonth(year, month);
+  const monthPrefix = `${year}-${String(month + 1).padStart(2, "0")}`;
+
+  const rows = useMemo(() => SALES_EMPLOYEES.map(emp => {
+    let reqTotal = 0, meetingsDone = 0, knowledgeTotal = 0, tasksDone = 0, tasksTotal = 0, deductionDays = 0;
+    let workdays = 0;
+    for (let d = 1; d <= dim; d++) {
+      const date = isoDate(year, month, d);
+      if (date > today || isWeekend(year, month, d)) continue;
+      workdays++;
+      const perf = getDayPerformance(emp.id, date, (dt) => countMeetingsForEmployee(emp.name, dt), cfg.requestsTarget, cfg.meetingsTarget, cfg.knowledgeTarget);
+      reqTotal += perf.requestsCount;
+      if (perf.meetingsDone) meetingsDone++;
+      knowledgeTotal += perf.knowledgeCount;
+      if (perf.adsTaskDone) tasksDone++;
+      if (perf.knowledgeTaskDone) tasksDone++;
+      if (perf.callsTaskDone) tasksDone++;
+      if (perf.rotationTaskDone) tasksDone++;
+      tasksTotal += 4;
+    }
+    deductionDays = loadCRMDeductions().filter(d => d.employeeId === emp.id && d.date.startsWith(monthPrefix)).reduce((s, d) => s + d.deductionDays, 0);
+    const reqTarget = workdays * cfg.requestsTarget;
+    const knowledgeTarget = workdays * cfg.knowledgeTarget;
+    return { emp, workdays, reqTotal, reqTarget, meetingsDone, knowledgeTotal, knowledgeTarget, tasksDone, tasksTotal, deductionDays };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [year, month, dim, today]);
+
+  function pct(a: number, b: number) { return b === 0 ? 0 : Math.round((a / b) * 100); }
+  function tone(a: number, b: number) {
+    const p = pct(a, b);
+    if (p >= 100) return "text-emerald-700 dark:text-emerald-400";
+    if (p >= 50) return "text-amber-600 dark:text-amber-400";
+    return "text-rose-600 dark:text-rose-400";
+  }
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-[#DCE9E6] dark:border-slate-800">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[700px] text-sm">
+          <thead>
+            <tr className="border-b border-[#DCE9E6] bg-[#F5F8F7] dark:border-slate-700 dark:bg-slate-800">
+              {["Employee", "Requests", "Meetings", "Projects in Market", "Tasks", "Deductions"].map(h => (
+                <th key={h} className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#DCE9E6] dark:divide-slate-800">
+            {rows.map(({ emp, reqTotal, reqTarget, meetingsDone, workdays, knowledgeTotal, knowledgeTarget, tasksDone, tasksTotal, deductionDays }) => (
+              <tr key={emp.id} onClick={() => onEmpClick(emp.id)} className="cursor-pointer transition hover:bg-[#F5F8F7] dark:hover:bg-slate-800/50">
+                <td className="px-5 py-3">
+                  <p className="font-semibold text-slate-900 dark:text-white">{emp.name}</p>
+                  <p className="text-xs text-slate-400">{emp.role}</p>
+                </td>
+                <td className="px-5 py-3">
+                  <span className={`font-semibold ${tone(reqTotal, reqTarget)}`}>{reqTotal}</span>
+                  <span className="text-slate-400">/{reqTarget}</span>
+                  <p className="text-[11px] text-slate-400">{pct(reqTotal, reqTarget)}%</p>
+                </td>
+                <td className="px-5 py-3">
+                  <span className={`font-semibold ${tone(meetingsDone, workdays)}`}>{meetingsDone}</span>
+                  <span className="text-slate-400">/{workdays} days</span>
+                </td>
+                <td className="px-5 py-3">
+                  <span className={`font-semibold ${tone(knowledgeTotal, knowledgeTarget)}`}>{knowledgeTotal}</span>
+                  <span className="text-slate-400">/{knowledgeTarget}</span>
+                  <p className="text-[11px] text-slate-400">{pct(knowledgeTotal, knowledgeTarget)}%</p>
+                </td>
+                <td className="px-5 py-3">
+                  <span className={`font-semibold ${tone(tasksDone, tasksTotal)}`}>{tasksDone}</span>
+                  <span className="text-slate-400">/{tasksTotal}</span>
+                  <p className="text-[11px] text-slate-400">{pct(tasksDone, tasksTotal)}%</p>
+                </td>
+                <td className="px-5 py-3">
+                  <span className={deductionDays > 0 ? "font-semibold text-rose-600 dark:text-rose-400" : "text-slate-400"}>
+                    {deductionDays > 0 ? `${deductionDays}d` : "—"}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="border-t border-[#DCE9E6] px-5 py-2 text-xs text-slate-400 dark:border-slate-700">Click a row to view that employee&apos;s month in detail.</p>
+    </div>
+  );
+}
+
+// ── All-employees day summary ──────────────────────────────────────────────────
+function AllDayView({ date, onEmpClick }: { date: string; onEmpClick: (empId: string) => void }) {
+  const cfg = loadCRMTaskConfig();
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-[#DCE9E6] dark:border-slate-800">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[700px] text-sm">
+          <thead>
+            <tr className="border-b border-[#DCE9E6] bg-[#F5F8F7] dark:border-slate-700 dark:bg-slate-800">
+              {["Employee", "Requests", "Meetings", "Projects in Market", "Ads", "Calls", "Rotation", "Deductions"].map(h => (
+                <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#DCE9E6] dark:divide-slate-800">
+            {SALES_EMPLOYEES.map(emp => {
+              const perf = getDayPerformance(emp.id, date, (d) => countMeetingsForEmployee(emp.name, d), cfg.requestsTarget, cfg.meetingsTarget, cfg.knowledgeTarget);
+              function Cell({ done, label }: { done: boolean; label?: string }) {
+                return (
+                  <td className="px-4 py-3">
+                    <span className={done ? "font-semibold text-emerald-700 dark:text-emerald-400" : "text-slate-400"}>
+                      {label ?? (done ? "✓" : "—")}
+                    </span>
+                  </td>
+                );
+              }
+              return (
+                <tr key={emp.id} onClick={() => onEmpClick(emp.id)} className="cursor-pointer transition hover:bg-[#F5F8F7] dark:hover:bg-slate-800/50">
+                  <td className="px-4 py-3">
+                    <p className="font-semibold text-slate-900 dark:text-white">{emp.name}</p>
+                    <p className="text-xs text-slate-400">{emp.role}</p>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={perf.requestsCount >= perf.requestsTarget ? "font-semibold text-emerald-700 dark:text-emerald-400" : perf.requestsCount > 0 ? "font-semibold text-amber-600 dark:text-amber-400" : "text-slate-400"}>
+                      {perf.requestsCount}/{perf.requestsTarget}
+                    </span>
+                  </td>
+                  <Cell done={perf.meetingsDone} label={`${perf.meetingsCount}/${perf.requestsTarget > 0 ? cfg.meetingsTarget : 1}`} />
+                  <td className="px-4 py-3">
+                    <span className={perf.knowledgeTaskDone ? "font-semibold text-emerald-700 dark:text-emerald-400" : perf.knowledgeCount > 0 ? "font-semibold text-amber-600 dark:text-amber-400" : "text-slate-400"}>
+                      {perf.knowledgeCount}/{perf.knowledgeTarget}
+                    </span>
+                  </td>
+                  <Cell done={perf.adsTaskDone} />
+                  <Cell done={perf.callsTaskDone} />
+                  <Cell done={perf.rotationTaskDone} />
+                  <td className="px-4 py-3">
+                    <span className={perf.deductions.length > 0 ? "font-semibold text-rose-600 dark:text-rose-400" : "text-slate-400"}>
+                      {perf.deductions.length > 0 ? `${perf.deductions.reduce((s, d) => s + d.deductionDays, 0)}d` : "—"}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="border-t border-[#DCE9E6] px-5 py-2 text-xs text-slate-400 dark:border-slate-700">Click a row to view that employee&apos;s day in detail.</p>
+    </div>
+  );
+}
+
 // ── Main workspace ────────────────────────────────────────────────────────────
 type ViewMode = "day" | "month";
 
@@ -595,6 +749,7 @@ export function CRMPerformanceWorkspace() {
             onChange={e => setSelectedEmpId(e.target.value)}
             className="rounded-xl border border-[#DCE9E6] bg-white px-4 py-2 text-sm font-medium dark:border-slate-700 dark:bg-slate-900"
           >
+            <option value="all">All Employees</option>
             {SALES_EMPLOYEES.map(e => (
               <option key={e.id} value={e.id}>{e.name} — {e.role}</option>
             ))}
@@ -631,20 +786,28 @@ export function CRMPerformanceWorkspace() {
           </div>
         )}
 
-        {/* Assign task button */}
-        <Button onClick={() => setShowAssignModal(true)} className="ml-auto">
-          <Plus className="h-4 w-4" /> Assign Extra Task
-        </Button>
+        {/* Assign task button — only for a specific employee */}
+        {selectedEmpId !== "all" && (
+          <Button onClick={() => setShowAssignModal(true)} className="ml-auto">
+            <Plus className="h-4 w-4" /> Assign Extra Task
+          </Button>
+        )}
       </div>
 
       {/* Content */}
-      {viewMode === "day" ? (
+      {selectedEmpId === "all" ? (
+        viewMode === "day" ? (
+          <AllDayView date={selectedDate} onEmpClick={(id) => { setSelectedEmpId(id); }} />
+        ) : (
+          <AllMonthView year={viewYear} month={viewMonth} onEmpClick={(id) => { setSelectedEmpId(id); }} />
+        )
+      ) : viewMode === "day" ? (
         <DayPerfCard emp={selectedEmp} date={selectedDate} onAssignTask={() => setShowAssignModal(true)} />
       ) : (
         <MonthView emp={selectedEmp} year={viewYear} month={viewMonth} onDayClick={(date) => { setSelectedDate(date); setViewMode("day"); }} />
       )}
 
-      {showAssignModal && selectedEmp && (
+      {showAssignModal && selectedEmpId !== "all" && selectedEmp && (
         <AssignTaskModal
           emp={selectedEmp}
           defaultDate={viewMode === "day" ? selectedDate : today}
