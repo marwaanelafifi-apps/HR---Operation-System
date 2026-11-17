@@ -270,7 +270,7 @@ function DayPerfCard({ emp, date, onAssignTask }: { emp: typeof SALES_EMPLOYEES[
 }
 
 // ── Month calendar grid ───────────────────────────────────────────────────────
-function MonthView({ emp, year, month }: { emp: typeof SALES_EMPLOYEES[0]; year: number; month: number }) {
+function MonthView({ emp, year, month, onDayClick }: { emp: typeof SALES_EMPLOYEES[0]; year: number; month: number; onDayClick: (date: string) => void }) {
   const today = todayISO();
   const dim = daysInMonth(year, month);
   const firstDow = new Date(year, month, 1).getDay();
@@ -362,8 +362,15 @@ function MonthView({ emp, year, month }: { emp: typeof SALES_EMPLOYEES[0]; year:
             const perf = perfByDay[d];
             const hasDeduction = (perf?.deductions.length ?? 0) > 0;
 
+            const isClickable = !weekend && !isFuture;
+            const CellTag = isClickable ? "button" : "div";
+
             return (
-              <div key={d} className={`relative min-h-[80px] border-b border-r border-[#DCE9E6] p-2 dark:border-slate-700 last:border-r-0 ${cellColor(d)}`}>
+              <CellTag
+                key={d}
+                {...(isClickable ? { type: "button" as const, onClick: () => onDayClick(date) } : {})}
+                className={`relative min-h-[80px] w-full border-b border-r border-[#DCE9E6] p-2 text-left dark:border-slate-700 last:border-r-0 ${cellColor(d)} ${isClickable ? "cursor-pointer hover:ring-2 hover:ring-inset hover:ring-[#0B4F4B]/30 dark:hover:ring-[#2E7D76]/40" : ""}`}
+              >
                 <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold ${isToday ? "bg-[#0B4F4B] text-white" : weekend ? "text-slate-300 dark:text-slate-600" : "text-slate-700 dark:text-slate-200"}`}>{d}</span>
                 {!weekend && !isFuture && perf && (
                   <>
@@ -380,17 +387,25 @@ function MonthView({ emp, year, month }: { emp: typeof SALES_EMPLOYEES[0]; year:
                           {perf.meetingsCount}/1
                         </span>
                       </div>
+                      {perf.knowledgeCount > 0 && (
+                        <div className="flex items-center gap-1">
+                          <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                          <span className={`text-[10px] font-semibold leading-none ${perf.knowledgeTaskDone ? "text-amber-700 dark:text-amber-400" : "text-amber-600 dark:text-amber-400"}`}>
+                            {perf.knowledgeCount}/{perf.knowledgeTarget}
+                          </span>
+                        </div>
+                      )}
                     </div>
                     <div className="mt-1 flex flex-wrap gap-0.5">
                       {perf.adsTaskDone && <span title="Ads" className="h-1.5 w-1.5 rounded-full bg-purple-500" />}
-                      {perf.knowledgeTaskDone && <span title="Knowledge" className="h-1.5 w-1.5 rounded-full bg-amber-500" />}
+                      {perf.knowledgeTaskDone && !perf.knowledgeCount && <span title="Knowledge" className="h-1.5 w-1.5 rounded-full bg-amber-500" />}
                       {perf.callsTaskDone && <span title="Calls" className="h-1.5 w-1.5 rounded-full bg-sky-500" />}
                       {perf.rotationTaskDone && <span title="Rotation" className="h-1.5 w-1.5 rounded-full bg-teal-500" />}
                       {hasDeduction && <span title="Deduction" className="h-1.5 w-1.5 rounded-full bg-rose-500" />}
                     </div>
                   </>
                 )}
-              </div>
+              </CellTag>
             );
           })}
         </div>
@@ -624,7 +639,7 @@ export function CRMPerformanceWorkspace() {
       {viewMode === "day" ? (
         <DayPerfCard emp={selectedEmp} date={selectedDate} onAssignTask={() => setShowAssignModal(true)} />
       ) : (
-        <MonthView emp={selectedEmp} year={viewYear} month={viewMonth} />
+        <MonthView emp={selectedEmp} year={viewYear} month={viewMonth} onDayClick={(date) => { setSelectedDate(date); setViewMode("day"); }} />
       )}
 
       {showAssignModal && selectedEmp && (
