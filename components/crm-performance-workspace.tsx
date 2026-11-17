@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import {
   addExtraTask, deleteExtraTask, getDayPerformance,
   getCustomTaskCompletion, loadCRMDeductions, loadExtraTasks, onCRMChanged,
-  taskForEmployeeOnDate,
+  taskForEmployeeOnDate, tasksForEmployeeOnDate,
   type AdsTaskData, type KnowledgeTaskData, type CallsTaskData, type RotationTaskData, type DailyTask,
 } from "@/lib/crm-store";
 import { customTaskAppliesToDate, loadCRMTaskConfig } from "@/lib/crm-task-config";
@@ -69,8 +69,7 @@ function DayPerfCard({ emp, date, onAssignTask }: { emp: typeof SALES_EMPLOYEES[
   const adsTask = taskForEmployeeOnDate(emp.id, date, "ads") as (DailyTask & { durationSeconds?: number }) | undefined;
   const adsData = adsTask?.data as AdsTaskData | undefined;
 
-  const knowledgeTask = taskForEmployeeOnDate(emp.id, date, "knowledge") as (DailyTask & { durationSeconds?: number }) | undefined;
-  const knowledgeData = knowledgeTask?.data as KnowledgeTaskData | undefined;
+  const knowledgeTasks = tasksForEmployeeOnDate(emp.id, date, "knowledge") as (DailyTask & { durationSeconds?: number })[];
 
   const callsTask = taskForEmployeeOnDate(emp.id, date, "calls") as (DailyTask & { durationSeconds?: number }) | undefined;
   const callsData = callsTask?.data as CallsTaskData | undefined;
@@ -161,39 +160,55 @@ function DayPerfCard({ emp, date, onAssignTask }: { emp: typeof SALES_EMPLOYEES[
             </div>
           )}
         </TaskRow>
-        <TaskRow label={`Projects in Market${perf.knowledgeTarget > 1 ? ` (${perf.knowledgeCount}/${perf.knowledgeTarget})` : ""}`} done={perf.knowledgeTaskDone} duration={knowledgeTask?.durationSeconds}>
-          {knowledgeData && (
-            knowledgeData.voiceNoteTranscript ? (
-              <div>
-                <p className="mb-1 font-semibold text-slate-500">Voice note ({knowledgeData.voiceNoteLanguage === "ar" ? "Arabic" : "English"})</p>
-                <p className={`leading-6 text-slate-700 dark:text-slate-200 ${knowledgeData.voiceNoteLanguage === "ar" ? "text-right" : ""}`} dir={knowledgeData.voiceNoteLanguage === "ar" ? "rtl" : "ltr"}>
-                  {knowledgeData.voiceNoteTranscript}
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-1">
-                {([
-                  ["Company", knowledgeData.assessment.companyName],
-                  ["Project", knowledgeData.assessment.projectName],
-                  ["Location", knowledgeData.assessment.location],
-                  ["Management & Ops", knowledgeData.assessment.managementAndOperations],
-                  ["Owner", knowledgeData.assessment.owner],
-                  ["Consultant", knowledgeData.assessment.investorType],
-                  ["Previous Projects", knowledgeData.assessment.previousWork],
-                  ["Area", knowledgeData.assessment.projectArea],
-                  ["Finishing", knowledgeData.assessment.finishingType],
-                  ["Details", knowledgeData.assessment.projectDetails],
-                  ["Units, Areas & Prices", knowledgeData.assessment.unitTypes],
-                  ["Maintenance", knowledgeData.assessment.maintenance],
-                  ["Delivery", knowledgeData.assessment.deliveryDate],
-                ] as [string, string][]).filter(([, v]) => v).map(([k, v]) => (
-                  <div key={k} className="flex gap-2">
-                    <span className="shrink-0 font-semibold text-slate-500">{k}:</span>
-                    <span className="text-slate-700 dark:text-slate-200">{v}</span>
+        <TaskRow label={`Projects in Market (${perf.knowledgeCount}/${perf.knowledgeTarget})`} done={perf.knowledgeTaskDone}>
+          {knowledgeTasks.length > 0 && (
+            <div className="space-y-3">
+              {knowledgeTasks.map((kt, idx) => {
+                const kd = kt.data as KnowledgeTaskData;
+                return (
+                  <div key={kt.id} className={knowledgeTasks.length > 1 ? "border-b border-[#DCE9E6] pb-3 last:border-0 last:pb-0 dark:border-slate-600" : ""}>
+                    {knowledgeTasks.length > 1 && (
+                      <p className="mb-1.5 font-semibold text-[#0B4F4B] dark:text-[#8FD4C6]">#{idx + 1}</p>
+                    )}
+                    {kd.voiceNoteTranscript ? (
+                      <div>
+                        <p className="mb-1 font-semibold text-slate-500">Voice note ({kd.voiceNoteLanguage === "ar" ? "Arabic" : "English"})</p>
+                        <p className={`leading-6 text-slate-700 dark:text-slate-200`} dir={kd.voiceNoteLanguage === "ar" ? "rtl" : "ltr"}>
+                          {kd.voiceNoteTranscript}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        {([
+                          ["Project", kd.assessment?.projectName],
+                          ["Company", kd.assessment?.companyName],
+                          ["Location", kd.assessment?.location],
+                          ["Previous Projects", kd.assessment?.previousWork],
+                          ["Area", kd.assessment?.projectArea],
+                          ["Finishing", kd.assessment?.finishingType],
+                          ["Construction", kd.assessment?.construction],
+                          ["Delivery", kd.assessment?.deliveryDate],
+                          ["Details", kd.assessment?.projectDetails],
+                          ["Units, Areas & Prices", `${kd.assessment?.unitTypes ?? ""}${kd.assessment?.pricesAndAcres ? ` / ${kd.assessment.pricesAndAcres}` : ""}`],
+                          ["Payment Plan", kd.assessment?.paymentPlan],
+                          ["Selling Points", kd.assessment?.sellingPoints],
+                          ["Weakness Points", kd.assessment?.weaknessPoints],
+                          ["Maintenance", kd.assessment?.maintenance],
+                          ["Consultant", kd.assessment?.investorType],
+                          ["Management & Ops", kd.assessment?.managementAndOperations],
+                          ["Notes", kd.assessment?.additionalNotes],
+                        ] as [string, string][]).filter(([, v]) => v).map(([k, v]) => (
+                          <div key={k} className="flex gap-2">
+                            <span className="shrink-0 font-semibold text-slate-500">{k}:</span>
+                            <span className="text-slate-700 dark:text-slate-200">{v}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                ))}
-              </div>
-            )
+                );
+              })}
+            </div>
           )}
         </TaskRow>
         <TaskRow label="Calls" done={perf.callsTaskDone} duration={callsTask?.durationSeconds}>
