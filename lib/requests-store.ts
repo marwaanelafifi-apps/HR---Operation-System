@@ -94,7 +94,8 @@ export const nowLabel = () => new Intl.DateTimeFormat("en", { dateStyle: "medium
 
 export function addVisit(visit: Omit<VisitRequest, "id" | "status" | "submittedAt">) {
   const store = loadRequests();
-  save({ ...store, visits: [{ ...visit, id: `omr-${Date.now()}`, status: "pending", submittedAt: nowLabel(), createdDate: new Date().toISOString().slice(0, 10) }, ...store.visits] });
+  const _d = new Date(); const _cd = `${_d.getFullYear()}-${String(_d.getMonth()+1).padStart(2,"0")}-${String(_d.getDate()).padStart(2,"0")}`;
+  save({ ...store, visits: [{ ...visit, id: `omr-${Date.now()}`, status: "pending", submittedAt: nowLabel(), createdDate: _cd }, ...store.visits] });
 }
 
 export function addExcuse(excuse: Omit<ExcuseRequest, "id" | "status" | "submittedAt"> & { hoursUsed?: number }) {
@@ -135,7 +136,7 @@ export function closeVisit(id: string, outcomeNotes: string, transportationCost:
 
 /** Approved site visits for this user that are today-or-earlier and not yet closed. */
 export function openVisitsForUser(employeeName: string): VisitRequest[] {
-  const today = new Date().toISOString().slice(0, 10);
+  const _d = new Date(); const today = `${_d.getFullYear()}-${String(_d.getMonth()+1).padStart(2,"0")}-${String(_d.getDate()).padStart(2,"0")}`;
   const { visits } = loadRequests();
   return visits.filter((v) => v.employeeName === employeeName && v.status === "approved" && v.date <= today && !v.closed);
 }
@@ -151,7 +152,7 @@ export function getTodayFieldVisits(employeeName: string): {
   checkIn: VisitRequest | null;
   checkOut: VisitRequest | null;
 } {
-  const today = new Date().toISOString().slice(0, 10);
+  const _d2 = new Date(); const today = `${_d2.getFullYear()}-${String(_d2.getMonth()+1).padStart(2,"0")}-${String(_d2.getDate()).padStart(2,"0")}`;
   const { visits } = loadRequests();
   const todayApproved = visits.filter(
     (v) => v.employeeName === employeeName && v.status === "approved" && v.date === today

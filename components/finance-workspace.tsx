@@ -169,7 +169,7 @@ function ExpensesSection() {
           <li key={visit.id} className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-start justify-between gap-3">
               <div className="flex-1">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Site visit <span className="text-slate-500 font-normal">#{visit.id.replace("omr-", "")}</span></p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Client Meeting <span className="text-slate-500 font-normal">#{visit.id.replace("omr-", "")}</span></p>
                 <h3 className="mt-1 text-lg font-semibold text-slate-950 dark:text-white">{visit.projectName}</h3>
                 <p className="text-sm text-slate-500">{visit.employeeName}</p>
               </div>
@@ -320,24 +320,61 @@ function AttendanceSection() {
 
       {/* Stats */}
       {ready && (() => {
-        const crmTotal = crmDeductions.reduce((s, d) => s + d.deductionDays, 0);
-        const totalDeduct = +(crmTotal + stats.delayDeductDays).toFixed(2);
+        const crmDeductTotal = crmDeductions.filter(d => (d.kind ?? "deduction") === "deduction").reduce((s, d) => s + d.deductionDays, 0);
+        const crmBonusTotal = crmDeductions.filter(d => d.kind === "bonus").reduce((s, d) => s + d.deductionDays, 0);
+        const rawDeduct = +(crmDeductTotal + stats.delayDeductDays).toFixed(2);
+        const net = +(rawDeduct - crmBonusTotal).toFixed(2);
         return (
-          <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            {[
-              { label: "Days Present", value: stats.present, color: "text-emerald-600", sub: "checked in" },
-              { label: "Days Late", value: stats.late, color: "text-amber-600", sub: stats.late > 0 ? `${Math.round(stats.lateMinTotal / stats.late)} min avg` : "no delays" },
-              { label: "Days Absent", value: stats.absent, color: "text-rose-600", sub: "no record" },
-              { label: "Total Hours", value: stats.hoursTotal.toFixed(1), color: "text-slate-950 dark:text-white", sub: "hours worked" },
-              { label: "Avg Hours/Day", value: stats.present > 0 ? (stats.hoursTotal / stats.present).toFixed(1) : "0.0", color: "text-slate-950 dark:text-white", sub: "per present day" },
-              { label: "Total Deductions", value: totalDeduct > 0 ? `−${totalDeduct}d` : "None", color: totalDeduct > 0 ? "text-red-600" : "text-slate-400", sub: `${crmTotal > 0 ? `${crmTotal}d mgmt` : ""}${crmTotal > 0 && stats.delayDeductDays > 0 ? " + " : ""}${stats.delayDeductDays > 0 ? `${stats.delayDeductDays.toFixed(2)}d late` : ""}` || "no deductions" },
-            ].map(({ label, value, color, sub }) => (
-              <div key={label} className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-                <p className={`mt-2 text-2xl font-semibold ${color}`}>{value}</p>
-                <p className="text-xs text-slate-400">{sub}</p>
+          <div className="space-y-3">
+            {/* Row 1 — attendance */}
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {[
+                { label: "Days Present", value: String(stats.present), color: "text-emerald-600", sub: "checked in" },
+                { label: "Days Late", value: String(stats.late), color: "text-amber-600", sub: stats.late > 0 ? `${Math.round(stats.lateMinTotal / stats.late)} min avg` : "no delays" },
+                { label: "Days Absent", value: String(stats.absent), color: "text-rose-600", sub: "no record" },
+                { label: "Total Hours", value: stats.hoursTotal.toFixed(1), color: "text-slate-950 dark:text-white", sub: "hours worked" },
+              ].map(({ label, value, color, sub }) => (
+                <div key={label} className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+                  <p className={`mt-2 text-2xl font-semibold ${color}`}>{value}</p>
+                  <p className="text-xs text-slate-400">{sub}</p>
+                </div>
+              ))}
+            </div>
+            {/* Row 2 — payroll adjustments */}
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className={`rounded-2xl border p-5 ${rawDeduct > 0 ? "border-rose-200 bg-rose-50 dark:border-rose-800 dark:bg-rose-950/30" : "border-[#DCE9E6] bg-white dark:border-slate-800 dark:bg-slate-900"}`}>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Deductions</p>
+                <p className={`mt-2 text-2xl font-semibold ${rawDeduct > 0 ? "text-rose-600" : "text-slate-400"}`}>
+                  {rawDeduct > 0 ? `−${rawDeduct}d` : "—"}
+                </p>
+                <p className="text-xs text-slate-400">
+                  {crmDeductTotal > 0 && `${crmDeductTotal}d mgmt`}
+                  {crmDeductTotal > 0 && stats.delayDeductDays > 0 && " + "}
+                  {stats.delayDeductDays > 0 && `${stats.delayDeductDays.toFixed(2)}d late`}
+                  {rawDeduct === 0 && "none this month"}
+                </p>
               </div>
-            ))}
+              <div className={`rounded-2xl border p-5 ${crmBonusTotal > 0 ? "border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30" : "border-[#DCE9E6] bg-white dark:border-slate-800 dark:bg-slate-900"}`}>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Bonuses</p>
+                <p className={`mt-2 text-2xl font-semibold ${crmBonusTotal > 0 ? "text-emerald-700 dark:text-emerald-400" : "text-slate-400"}`}>
+                  {crmBonusTotal > 0 ? `+${crmBonusTotal}d` : "—"}
+                </p>
+                <p className="text-xs text-slate-400">{crmBonusTotal > 0 ? "this month" : "none this month"}</p>
+              </div>
+              <div className={`rounded-2xl border p-5 ${net > 0 ? "border-rose-200 bg-rose-50 dark:border-rose-800 dark:bg-rose-950/30" : net < 0 ? "border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30" : "border-[#DCE9E6] bg-white dark:border-slate-800 dark:bg-slate-900"}`}>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Net balance</p>
+                <p className={`mt-2 text-2xl font-semibold ${net > 0 ? "text-rose-600" : net < 0 ? "text-emerald-700 dark:text-emerald-400" : "text-slate-400"}`}>
+                  {net > 0 ? `−${net}d` : net < 0 ? `+${Math.abs(net)}d` : "0"}
+                </p>
+                <p className="text-xs text-slate-400">
+                  {net === 0 && rawDeduct === 0 && "no adjustments"}
+                  {net === 0 && rawDeduct > 0 && "bonuses offset deductions"}
+                  {net > 0 && `after ${crmBonusTotal > 0 ? `${crmBonusTotal}d bonus` : "no bonus"}`}
+                  {net < 0 && "net positive this month"}
+                </p>
+              </div>
+            </div>
           </div>
         );
       })()}
@@ -394,8 +431,10 @@ function AttendanceSection() {
                 status === "absent" ? "text-rose-800 dark:text-rose-200" :
                 "text-slate-700 dark:text-slate-300";
 
-              const crmDeductDay = crmDeductions.filter(d => d.date === ds);
+              const crmDeductDay = crmDeductions.filter(d => d.date === ds && (d.kind ?? "deduction") === "deduction");
+              const crmBonusDay = crmDeductions.filter(d => d.date === ds && d.kind === "bonus");
               const crmDays = crmDeductDay.reduce((s, d) => s + d.deductionDays, 0);
+              const bonusDays = crmBonusDay.reduce((s, d) => s + d.deductionDays, 0);
 
               return (
                 <div key={dayNum}
@@ -410,7 +449,12 @@ function AttendanceSection() {
                   )}
                   {crmDays > 0 && (
                     <span className="mt-0.5 inline-block rounded px-1 py-0.5 text-[10px] font-semibold bg-red-200 text-red-900 dark:bg-red-900 dark:text-red-100 leading-tight">
-                      CRM −{crmDays}d
+                      −{crmDays}d
+                    </span>
+                  )}
+                  {bonusDays > 0 && (
+                    <span className="mt-0.5 inline-block rounded px-1 py-0.5 text-[10px] font-semibold bg-emerald-200 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100 leading-tight">
+                      +{bonusDays}d
                     </span>
                   )}
                   {r.checkIn && (
@@ -438,7 +482,7 @@ function AttendanceSection() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-[#DCE9E6] dark:border-slate-800">
-                {["Employee", "Role", "Present", "Late", "Absent", "Hours", "Deductions"].map(h => (
+                {["Employee", "Role", "Present", "Late", "Absent", "Hours", "Bonus", "Net balance"].map(h => (
                   <th key={h} className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">{h}</th>
                 ))}
               </tr>
@@ -460,8 +504,10 @@ function AttendanceSection() {
                   } else if (isWorkday) acc.absent++;
                   return acc;
                 }, { present: 0, late: 0, absent: 0, hours: 0, delayDeduct: 0 });
-                const crmDeductTotal = empCRMDeductions.reduce((sum, d) => sum + d.deductionDays, 0);
+                const crmDeductTotal = empCRMDeductions.filter(d => (d.kind ?? "deduction") === "deduction").reduce((sum, d) => sum + d.deductionDays, 0);
+                const crmBonusTotal = empCRMDeductions.filter(d => d.kind === "bonus").reduce((sum, d) => sum + d.deductionDays, 0);
                 const totalDeduct = +(s.delayDeduct + crmDeductTotal).toFixed(2);
+                const netBalance = +(totalDeduct - crmBonusTotal).toFixed(2);
                 const isSelected = emp.name === selectedEmp;
                 return (
                   <tr key={emp.id}
@@ -473,7 +519,8 @@ function AttendanceSection() {
                     <td className="px-5 py-3"><span className={`font-semibold ${s.late > 0 ? "text-amber-600" : "text-slate-400"}`}>{s.late}</span></td>
                     <td className="px-5 py-3"><span className={`font-semibold ${s.absent > 0 ? "text-rose-600" : "text-slate-400"}`}>{s.absent}</span></td>
                     <td className="px-5 py-3 text-slate-700 dark:text-slate-300">{s.hours > 0 ? `${s.hours.toFixed(1)}h` : "—"}</td>
-                    <td className="px-5 py-3"><span className={`font-semibold ${totalDeduct > 0 ? "text-rose-600" : "text-slate-400"}`}>{totalDeduct > 0 ? `−${totalDeduct}d` : "—"}</span></td>
+                    <td className="px-5 py-3"><span className={`font-semibold ${crmBonusTotal > 0 ? "text-emerald-700 dark:text-emerald-400" : "text-slate-400"}`}>{crmBonusTotal > 0 ? `+${crmBonusTotal}d` : "—"}</span></td>
+                    <td className="px-5 py-3"><span className={`font-semibold ${netBalance > 0 ? "text-rose-600" : netBalance < 0 ? "text-emerald-700 dark:text-emerald-400" : "text-slate-400"}`}>{netBalance > 0 ? `−${netBalance}d` : netBalance < 0 ? `+${Math.abs(netBalance)}d` : "—"}</span></td>
                   </tr>
                 );
               })}

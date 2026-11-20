@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ArrowRight, Check, Clock3, AlertTriangle } from "lucide-react";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { addExcuse, getExcuseBalance, loadRequests, onRequestsChanged, type ExcuseRequest } from "@/lib/requests-store";
@@ -107,12 +108,7 @@ export function ExcuseRequestForm() {
 
         <form onSubmit={handleSubmit} className="space-y-5 p-6">
           <FormField label="Date" required>
-            <input
-              required
-              type="date"
-              value={form.date}
-              onChange={e => setForm({ ...form, date: e.target.value })}
-            />
+            <DatePicker required value={form.date} onChange={v => setForm({ ...form, date: v })} />
           </FormField>
 
           <div>

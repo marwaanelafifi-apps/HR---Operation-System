@@ -1,84 +1,112 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Clock3, LogIn, LogOut, MapPin, X } from "lucide-react";
+import { Check, Clock3, FileText, LogIn, LogOut, MapPin, Palmtree, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { decide, loadRequests, onRequestsChanged, type ExcuseRequest, type VisitRequest } from "@/lib/requests-store";
+import { decideHR, loadHRRequests, onHRRequestsChanged, type LetterRequest, type VacationRequest } from "@/lib/hr-requests-store";
 
-type Filter = "pending" | "approved" | "rejected" | "all";
+type StatusFilter = "pending" | "approved" | "rejected" | "all";
+type TypeFilter = "all" | "visit" | "excuse" | "vacation" | "letter";
 type Item =
   | { kind: "visit"; at: string; data: VisitRequest }
-  | { kind: "excuse"; at: string; data: ExcuseRequest };
+  | { kind: "excuse"; at: string; data: ExcuseRequest }
+  | { kind: "vacation"; at: string; data: VacationRequest }
+  | { kind: "letter"; at: string; data: LetterRequest };
 
-const filters: { key: Filter; label: string }[] = [
+const statusFilters: { key: StatusFilter; label: string }[] = [
   { key: "pending", label: "Waiting" },
   { key: "approved", label: "Approved" },
   { key: "rejected", label: "Declined" },
   { key: "all", label: "All" },
 ];
 
+const typeFilters: { key: TypeFilter; label: string }[] = [
+  { key: "all", label: "All types" },
+  { key: "visit", label: "Meetings" },
+  { key: "excuse", label: "Excuses" },
+  { key: "vacation", label: "Vacations" },
+  { key: "letter", label: "HR Letters" },
+];
+
+function TabBar<T extends string>({ options, value, onChange }: { options: { key: T; label: string }[]; value: T; onChange: (v: T) => void }) {
+  return (
+    <div className="flex w-fit max-w-full gap-1 overflow-x-auto rounded-2xl border border-[#DCE9E6] bg-white p-1 dark:border-slate-800 dark:bg-slate-900">
+      {options.map((o) => (
+        <button
+          key={o.key}
+          onClick={() => onChange(o.key)}
+          className={`whitespace-nowrap rounded-xl px-4 py-2 text-sm font-semibold transition ${value === o.key ? "bg-[#0B4F4B] text-white" : "text-slate-500 hover:text-[#0B4F4B] dark:text-slate-400"}`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function ApprovalsWorkspace() {
   const [visits, setVisits] = useState<VisitRequest[]>([]);
   const [excuses, setExcuses] = useState<ExcuseRequest[]>([]);
-  const [filter, setFilter] = useState<Filter>("pending");
+  const [vacations, setVacations] = useState<VacationRequest[]>([]);
+  const [letters, setLetters] = useState<LetterRequest[]>([]);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("pending");
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    const refresh = () => {
-      const s = loadRequests();
-      setVisits(s.visits);
-      setExcuses(s.excuses);
-    };
-    refresh();
+    const refreshMain = () => { const s = loadRequests(); setVisits(s.visits); setExcuses(s.excuses); };
+    const refreshHR = () => { const s = loadHRRequests(); setVacations(s.vacations); setLetters(s.letters); };
+    refreshMain(); refreshHR();
     setReady(true);
-    return onRequestsChanged(refresh);
+    const u1 = onRequestsChanged(refreshMain);
+    const u2 = onHRRequestsChanged(refreshHR);
+    return () => { u1(); u2(); };
   }, []);
 
-  const items: Item[] = [
+  const allItems: Item[] = [
     ...visits.map((data) => ({ kind: "visit" as const, at: data.date, data })),
     ...excuses.map((data) => ({ kind: "excuse" as const, at: data.date, data })),
-  ]
-    .filter((i) => filter === "all" || i.data.status === filter)
-    .sort((a, b) => a.at.localeCompare(b.at));
+    ...vacations.map((data) => ({ kind: "vacation" as const, at: data.fromDate, data })),
+    ...letters.map((data) => ({ kind: "letter" as const, at: data.submittedAt.slice(0, 10), data })),
+  ].sort((a, b) => b.at.localeCompare(a.at));
 
-  const waiting = visits.filter((v) => v.status === "pending").length + excuses.filter((e) => e.status === "pending").length;
+  const items = allItems
+    .filter((i) => typeFilter === "all" || i.kind === typeFilter)
+    .filter((i) => statusFilter === "all" || i.data.status === statusFilter);
+
+  const waiting = allItems.filter(i => i.data.status === "pending").length;
 
   return (
-    <div className="space-y-6 pb-8">
+    <div className="space-y-5 pb-8">
       <header>
         <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#0B4F4B] dark:text-[#8FD4C6]">For CEO and GM</p>
         <h1 className="mt-1 text-3xl font-semibold tracking-[-0.03em] text-slate-950 dark:text-white">Approvals</h1>
         <p className="mt-1.5 text-sm text-slate-500">
-          {ready && waiting > 0 ? `${waiting} request${waiting === 1 ? "" : "s"} waiting for a decision.` : "Nothing is waiting for a decision."}
+          {ready && waiting > 0 ? `${waiting} request${waiting !== 1 ? "s" : ""} waiting for a decision.` : "Nothing is waiting for a decision."}
         </p>
       </header>
 
-      <div role="tablist" aria-label="Filter requests" className="flex w-fit max-w-full gap-1 overflow-x-auto rounded-2xl border border-[#DCE9E6] bg-white p-1 dark:border-slate-800 dark:bg-slate-900">
-        {filters.map((f) => (
-          <button
-            key={f.key}
-            role="tab"
-            aria-selected={filter === f.key}
-            onClick={() => setFilter(f.key)}
-            className={`whitespace-nowrap rounded-xl px-4 py-2 text-sm font-semibold transition ${filter === f.key ? "bg-[#0B4F4B] text-white" : "text-slate-500 hover:text-[#0B4F4B] dark:text-slate-400"}`}
-          >
-            {f.label}
-          </button>
-        ))}
+      <div className="flex flex-wrap gap-3">
+        <TabBar options={typeFilters} value={typeFilter} onChange={setTypeFilter} />
+        <TabBar options={statusFilters} value={statusFilter} onChange={setStatusFilter} />
       </div>
 
       {ready && items.length === 0 && (
         <div className="rounded-2xl border border-dashed border-[#DCE9E6] bg-white p-10 text-center dark:border-slate-800 dark:bg-slate-900">
           <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">No requests here</p>
-          <p className="mt-1 text-sm text-slate-500">Site visits and excuse requests from brokers and staff appear here.</p>
+          <p className="mt-1 text-sm text-slate-500">No requests match this filter.</p>
         </div>
       )}
 
       <ul className="grid gap-4 lg:grid-cols-2">
         {items.map((item) => (
           <li key={`${item.kind}-${item.data.id}`}>
-            {item.kind === "visit" ? <VisitCard req={item.data} /> : <ExcuseCard req={item.data} />}
+            {item.kind === "visit" ? <VisitCard req={item.data} /> :
+             item.kind === "excuse" ? <ExcuseCard req={item.data} /> :
+             item.kind === "vacation" ? <VacationCard req={item.data} /> :
+             <LetterCard req={item.data} />}
           </li>
         ))}
       </ul>
@@ -112,7 +140,7 @@ function VisitCard({ req }: { req: VisitRequest }) {
         <div className="flex items-center gap-3">
           <span className="grid h-9 w-9 place-items-center rounded-xl bg-[#E8F3F1] text-[#0B4F4B] dark:bg-[#133E3C] dark:text-[#8FD4C6]"><MapPin className="h-4 w-4" /></span>
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Site visit</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Client Meeting</p>
             <p className="text-sm font-semibold text-slate-900 dark:text-white">{req.employeeName}<span className="font-normal text-slate-500"> · {req.employeeRole}</span></p>
           </div>
         </div>
@@ -196,8 +224,48 @@ function ExcuseCard({ req }: { req: ExcuseRequest }) {
       when={`${req.date} · ${req.slot} slot (1 hour)`}
       title={`${req.slot} excuse`}
       detail={[["Reason", req.reason]]}
-      status_={req}
+      decisionNote={req.decisionNote}
       onDecide={(status, note) => decide("excuse", req.id, status, note)}
+    />
+  );
+}
+
+function VacationCard({ req }: { req: VacationRequest }) {
+  const days = Math.round((new Date(req.toDate).getTime() - new Date(req.fromDate).getTime()) / 86400000) + 1;
+  return (
+    <Card
+      icon={<Palmtree className="h-4 w-4" />}
+      kind="Vacation"
+      who={req.employeeName}
+      role=""
+      status={req.status}
+      when={req.fromDate === req.toDate ? req.fromDate : `${req.fromDate} → ${req.toDate} (${days} days)`}
+      title="Vacation request"
+      detail={[["Reason", req.reason]]}
+      decisionNote={req.decisionNote}
+      onDecide={(status, note) => decideHR("vacation", req.id, status, note)}
+    />
+  );
+}
+
+function LetterCard({ req }: { req: LetterRequest }) {
+  const detail: [string, string][] = [
+    ["Purpose", req.purpose],
+    ...(req.addressedTo ? [["Addressed to", req.addressedTo] as [string, string]] : []),
+    ...(req.neededBy ? [["Needed by", req.neededBy] as [string, string]] : []),
+  ];
+  return (
+    <Card
+      icon={<FileText className="h-4 w-4" />}
+      kind="HR Letter"
+      who={req.employeeName}
+      role=""
+      status={req.status}
+      when={req.submittedAt.slice(0, 10)}
+      title={req.letterType}
+      detail={detail}
+      decisionNote={req.decisionNote}
+      onDecide={(status, note) => decideHR("letter", req.id, status, note)}
     />
   );
 }
@@ -211,11 +279,11 @@ type CardProps = {
   when: string;
   title: string;
   detail: [string, string][];
-  status_: VisitRequest | ExcuseRequest;
+  decisionNote?: string;
   onDecide: (status: "approved" | "rejected", note?: string) => void;
 };
 
-function Card({ icon, kind, who, role, status, when, title, detail, status_, onDecide }: CardProps) {
+function Card({ icon, kind, who, role, status, when, title, detail, decisionNote, onDecide }: CardProps) {
   const [note, setNote] = useState("");
   const [declining, setDeclining] = useState(false);
   const tone = status === "approved" ? "success" : status === "rejected" ? "danger" : "warning";
@@ -246,17 +314,17 @@ function Card({ icon, kind, who, role, status, when, title, detail, status_, onD
         ))}
       </dl>
 
-      {status_.decisionNote && (
-        <p className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">Note: {status_.decisionNote}</p>
+      {decisionNote && (
+        <p className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">Note: {decisionNote}</p>
       )}
 
       {status === "pending" && (
         <div className="mt-auto pt-5">
           {declining ? (
             <div className="space-y-3">
-              <label htmlFor={`note-${status_.decidedAt ?? title}-${when}`} className="block text-xs font-medium text-slate-600 dark:text-slate-300">Reason for declining (optional)</label>
+              <label htmlFor={`note-${title}-${when}`} className="block text-xs font-medium text-slate-600 dark:text-slate-300">Reason for declining (optional)</label>
               <input
-                id={`note-${status_.decidedAt ?? title}-${when}`}
+                id={`note-${title}-${when}`}
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
                 className="w-full rounded-xl border border-[#DCE9E6] bg-transparent px-3 py-2 text-sm dark:border-slate-700"

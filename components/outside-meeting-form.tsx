@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Check, ChevronDown, Clock3, MapPin, User, Phone, Calendar, Building2, StickyNote } from "lucide-react";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Button } from "@/components/ui/button";
 import { zones } from "@/lib/mock-data";
 import { addVisit } from "@/lib/requests-store";
@@ -230,7 +231,7 @@ export function OutsideMeetingForm({ onDone }: { onDone?: () => void } = {}) {
           <SectionLabel className="mt-7">Schedule</SectionLabel>
           <div className="mt-3 grid gap-4 sm:grid-cols-2">
             <IconField label="Date" icon={<Calendar className="h-4 w-4" />} required hint="Tomorrow or later">
-              <input required type="date" value={form.date} min={tomorrowDate()} onChange={e => setForm({ ...form, date: e.target.value })} />
+              <DatePicker required value={form.date} min={tomorrowDate()} onChange={v => setForm({ ...form, date: v })} />
             </IconField>
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Time <span className="text-rose-500">*</span></label>

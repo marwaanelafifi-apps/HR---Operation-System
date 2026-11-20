@@ -11,7 +11,7 @@ const ME = "Ahmed Khalil"; // demo user
 
 type Tab = "upcoming" | "pending" | "past";
 
-function todayISO() { return new Date().toISOString().slice(0, 10); }
+function todayISO() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
 function parseDateTime(date: string, time: string) { return new Date(`${date}T${time || "00:00"}`); }
 function friendlyDate(iso: string) {
   const d = new Date(`${iso}T00:00`);
@@ -76,11 +76,11 @@ export function MeetingsWorkspace() {
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#0B4F4B] dark:text-[#8FD4C6]">Sales</p>
           <h1 className="mt-1 text-3xl font-semibold tracking-[-0.03em] text-slate-950 dark:text-white sm:text-4xl">Meetings</h1>
           <p className="mt-1.5 max-w-xl text-sm leading-6 text-slate-500 dark:text-slate-400">
-            Submit site visit requests, track approvals, and close every meeting with its outcome.
+            Submit client meeting requests, track approvals, and close every meeting with its outcome.
           </p>
         </div>
         <Button onClick={() => setShowForm(true)} className="bg-[#0B4F4B] text-white hover:bg-[#063C39]">
-          <Plus className="h-4 w-4" />New site visit
+          <Plus className="h-4 w-4" />New Client Meeting
         </Button>
       </header>
 
@@ -214,8 +214,8 @@ function TabButton({ label, count, active, onClick }: { label: string; count: nu
 
 function EmptyState({ tab, onNew }: { tab: Tab; onNew: () => void }) {
   const copy = {
-    upcoming: { title: "No upcoming meetings", body: "Approved site visits will show up here once the CEO / GM approves them." },
-    pending: { title: "No pending requests", body: "Submitted visits awaiting approval will appear here." },
+    upcoming: { title: "No upcoming meetings", body: "Approved client meetings will show up here once the CEO / GM approves them." },
+    pending: { title: "No pending requests", body: "Submitted meeting requests awaiting approval will appear here." },
     past: { title: "No past meetings yet", body: "Completed and declined visits are archived here." },
   }[tab];
   return (
@@ -226,7 +226,7 @@ function EmptyState({ tab, onNew }: { tab: Tab; onNew: () => void }) {
       <h3 className="mt-4 text-lg font-semibold text-slate-950 dark:text-white">{copy.title}</h3>
       <p className="mx-auto mt-1 max-w-sm text-sm text-slate-500">{copy.body}</p>
       <Button onClick={onNew} className="mt-5 bg-[#0B4F4B] text-white hover:bg-[#063C39]">
-        <Plus className="h-4 w-4" />Request a site visit
+        <Plus className="h-4 w-4" />Request a client meeting
       </Button>
     </div>
   );
@@ -494,8 +494,8 @@ function FormDialog({ onClose }: { onClose: () => void }) {
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[#DCE9E6] px-6 py-5 dark:border-slate-800">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#0B4F4B] dark:text-[#8FD4C6]">Site visit</p>
-            <h2 className="mt-1 text-xl font-semibold tracking-tight text-slate-950 dark:text-white">Request a new site visit</h2>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#0B4F4B] dark:text-[#8FD4C6]">Client Meeting</p>
+            <h2 className="mt-1 text-xl font-semibold tracking-tight text-slate-950 dark:text-white">Request a new client meeting</h2>
           </div>
           <button onClick={onClose} aria-label="Close" className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-[#E8F3F1] hover:text-[#0B4F4B] dark:hover:bg-slate-800">
             <X className="h-5 w-5" />

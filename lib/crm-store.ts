@@ -22,6 +22,21 @@ export interface AdsTaskData {
   platform: string[];          // derived platform labels
 }
 
+export type UnitFloor = "Typical" | "Ground" | "Roof";
+
+/** One row of the unit table. Which extra area applies depends on `floor`. */
+export interface UnitRow {
+  unitType: string;
+  floor: UnitFloor;
+  areaFrom: string;      // required
+  areaTo: string;        // optional — open-ended when blank
+  gardenArea: string;    // required on Ground
+  terraceArea: string;   // required on Roof
+  startingPrice: string;
+  /** Legacy single-value area, kept so older submissions still render. */
+  area?: string;
+}
+
 export interface ProjectAssessment {
   salesName: string;
   date: string;
@@ -31,8 +46,10 @@ export interface ProjectAssessment {
   location: string;
   projectArea: string;          // Project Acres
   projectDetails: string;       // Project Details & Facilities
-  unitTypes: string;
-  pricesAndAcres: string;
+  unitTable: UnitRow[];
+  /** Legacy free-text fields, kept so older submissions still render. */
+  unitTypes?: string;
+  pricesAndAcres?: string;
   paymentPlan: string;
   finishingType: string;        // dropdown
   construction: string;         // dropdown
@@ -99,6 +116,27 @@ export interface CRMDeduction {
   deductionDays: number;
   reason: string;
   extraTaskId: string;
+  /** "deduction" (default, omitted on legacy records) or "bonus". */
+  kind?: "deduction" | "bonus";
+  createdAt?: string;   // ISO — optional for backward compat with legacy records
+}
+
+/**
+ * A manager-entered payroll adjustment: a deduction or a bonus, always with a note.
+ * Deductions are mirrored into CRMDeduction so finance and attendance keep working.
+ */
+export type AdjustmentKind = "deduction" | "bonus";
+
+export interface CRMAdjustment {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  date: string;      // YYYY-MM-DD
+  kind: AdjustmentKind;
+  days: number;      // in day units — 0.25 / 0.5 / 1 / 2 …
+  note: string;      // required: the reason
+  createdBy: string;
+  createdAt: string; // ISO
 }
 
 export interface CustomTaskCompletion {
@@ -119,6 +157,7 @@ const TASKS_KEY = "opshub-crm-daily-tasks-v1";
 const EXTRA_TASKS_KEY = "opshub-crm-extra-tasks-v1";
 const DEDUCTIONS_KEY = "opshub-crm-deductions-v1";
 const CUSTOM_COMPLETIONS_KEY = "opshub-crm-custom-completions-v1";
+const ADJUSTMENTS_KEY = "opshub-crm-adjustments-v1";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -207,6 +246,7 @@ export function addExtraTask(data: Omit<ExtraTask, "id" | "createdAt" | "acknowl
       deductionDays: data.deductionDays,
       reason: data.note || "Performance deduction",
       extraTaskId: rec.id,
+      createdAt: rec.createdAt,
     };
     writeJson<CRMDeduction>(DEDUCTIONS_KEY, [...loadCRMDeductions(), deduction]);
   }
@@ -285,6 +325,53 @@ export function deductionsForEmployee(employeeId: string): CRMDeduction[] {
 export function deductionsForEmployeeInMonth(employeeId: string, year: number, month: number): CRMDeduction[] {
   const prefix = `${year}-${String(month + 1).padStart(2, "0")}`;
   return deductionsForEmployee(employeeId).filter(d => d.date.startsWith(prefix));
+}
+
+// ── Deductions & Bonuses (manager adjustments) ────────────────────────────────
+
+export function loadAdjustments(): CRMAdjustment[] { return readJson<CRMAdjustment>(ADJUSTMENTS_KEY); }
+
+export function addAdjustment(data: Omit<CRMAdjustment, "id" | "createdAt">): CRMAdjustment {
+  const rec: CRMAdjustment = { ...data, id: uid(), createdAt: new Date().toISOString() };
+  writeJson(ADJUSTMENTS_KEY, [...loadAdjustments(), rec]);
+  // Mirror both deductions and bonuses into the finance/attendance feed.
+  if (rec.days > 0) {
+    const entry: CRMDeduction = {
+      id: rec.id,
+      employeeId: rec.employeeId,
+      employeeName: rec.employeeName,
+      date: rec.date,
+      deductionDays: rec.days,
+      reason: rec.note,
+      extraTaskId: rec.id,
+      kind: rec.kind,
+      createdAt: rec.createdAt,
+    };
+    writeJson<CRMDeduction>(DEDUCTIONS_KEY, [...loadCRMDeductions(), entry]);
+  }
+  notify();
+  return rec;
+}
+
+export function deleteAdjustment(id: string) {
+  writeJson(ADJUSTMENTS_KEY, loadAdjustments().filter(a => a.id !== id));
+  writeJson(DEDUCTIONS_KEY, loadCRMDeductions().filter(d => d.id !== id));
+  notify();
+}
+
+export function adjustmentsForEmployeeOnDate(employeeId: string, date: string): CRMAdjustment[] {
+  return loadAdjustments().filter(a => a.employeeId === employeeId && a.date === date);
+}
+
+export function adjustmentsForEmployeeInMonth(employeeId: string, monthPrefix: string): CRMAdjustment[] {
+  return loadAdjustments().filter(a => a.employeeId === employeeId && a.date.startsWith(monthPrefix));
+}
+
+/** Totals in day units. `net` is positive when bonuses outweigh deductions. */
+export function adjustmentTotals(list: CRMAdjustment[]): { deduction: number; bonus: number; net: number } {
+  const deduction = list.filter(a => a.kind === "deduction").reduce((s, a) => s + a.days, 0);
+  const bonus = list.filter(a => a.kind === "bonus").reduce((s, a) => s + a.days, 0);
+  return { deduction, bonus, net: bonus - deduction };
 }
 
 // ── URL Validation ────────────────────────────────────────────────────────────

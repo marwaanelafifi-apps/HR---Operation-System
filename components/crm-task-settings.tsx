@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Check, GripVertical, Link2, Lock, Paperclip, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DatePicker } from "@/components/ui/date-picker";
 import {
   loadCRMTaskConfig, saveCRMTaskConfig, onCRMTaskConfigChanged,
   DEFAULT_CONFIG,
@@ -398,7 +399,7 @@ export function CRMTaskSettings() {
                   {/* Schedule */}
                   <div>
                     <label className={labelCls}>Start date</label>
-                    <input type="date" value={t.startDate ?? ""} onChange={e => updateCustomTask(t.id, { startDate: e.target.value })} className={inputCls} />
+                    <DatePicker value={t.startDate ?? ""} onChange={v => updateCustomTask(t.id, { startDate: v })} />
                   </div>
                   <div>
                     <label className={labelCls}>Due time (optional)</label>

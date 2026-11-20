@@ -13,9 +13,11 @@ The present user-facing scope is:
 - CRM daily tasks: Ads, Projects in Market (Knowledge), Calls, Rotation
 - CRM requests and meetings (unified card, per-employee targets)
 - CRM performance tracking and task history
-- Finance dashboard: per-employee and all-employees deduction summary
+- Finance dashboard: per-employee and all-employees deduction/bonus/net summary
 - Admin panel: employees, settings, assessment locks, meetings tab (delete)
-- Admin-assigned extra tasks visible on employee CRM page
+- Admin-assigned extra tasks appear as numbered task cards in employee CRM daily tasks
+- Manager deduction & bonus system (`CRMAdjustment`) with per-employee notes
+- Bonuses and deductions reflected in attendance calendar, finance dashboard, and CRM daily tasks
 
 ## Workspace and access model
 
@@ -104,15 +106,27 @@ Use `public/Logo.png` as the brand asset. The visual system is formal and modern
 - `KnowledgeFieldConfig` has: `key`, `labelEn`, `labelAr`, `enabled`, `required`, `fieldType` (`"text" | "date" | "dropdown" | "textarea"`), `options`, `layout` (`"full" | "right"`).
 - `layout: "full"` → spans both grid columns. `layout: "right"` → groups consecutive right-layout fields into one flex column paired with the preceding left field.
 
-## Deductions
+## Deductions & Bonuses
 
-- **CRM deductions** (`CRMDeduction` in `lib/crm-store.ts`): assigned by admin via extra tasks with `deductionDays`.
+- **`CRMAdjustment`** (`lib/crm-store.ts`): canonical manager-entered deductions and bonuses. Fields: `id`, `employeeId`, `employeeName`, `date`, `kind` ("deduction"|"bonus"), `days` (0.25/0.5/1/2/3), `note`, `createdBy`, `createdAt`.
+- `addAdjustment()` mirrors records into `CRMDeduction` store with `kind` and `createdAt` for finance/attendance consumers.
+- `adjustmentTotals(employeeId, year, month)` returns `{ deduction, bonus, net }` in day units.
+- **`CRMDeduction`** (`lib/crm-store.ts`): also fed by extra tasks with `deductionDays > 0`. Optional `kind` field ("deduction"|"bonus") — legacy records without it are treated as deductions. Optional `createdAt` for timestamp display.
 - **Delay deductions**: computed from `calcDelayMinutes` + `deductionForDelay` from `lib/work-schedule.ts`.
-- Both types are surfaced in:
-  - Attendance Today view sidebar ("Deductions today" red card)
-  - Attendance Month view stats tile + calendar cell pills
-  - Finance per-employee stats tile ("Total Deductions" = mgmt + late)
-  - Finance all-employees table ("Deductions" column)
+- All types surfaced in:
+  - Attendance Today sidebar: separate "Deductions today" (rose) and "Bonuses today" (emerald) cards with timestamps
+  - Attendance Month view: 3 stat tiles — Deductions / Bonuses / Net Balance; calendar cells show `−Xd` and `+Xd` pills
+  - Finance per-employee: same 3-tile layout
+  - Finance all-employees table: Bonus + Net Balance columns
+  - CRM Daily Tasks: Performance Evaluation chip strip (bonuses/deductions only; extra tasks are in the main task list)
+
+## Extra tasks (admin-assigned)
+
+- `ExtraTask` has `note`, `assignedDate`, `deductionDays`, `acknowledged`, `createdAt`.
+- Extra tasks for today appear as **numbered task cards** in the CRM Daily Tasks main list (clipboard icon, "Done" button).
+- Desc line shows "Assigned by manager at HH:MM" and optional deduction note.
+- If `deductionDays > 0`, a `CRMDeduction` entry is also created (feeds finance/attendance).
+- Assign Extra Task modal supports side-by-side Deduction and Bonus pickers (3-col grid: None / ¼ day / 0.5 day / 1 day / 2 days / 3 days).
 
 ## Lead sources
 
@@ -147,16 +161,13 @@ docker run -d --name opshub-web-local -w /app -p 3000:3000 -e NODE_ENV=productio
 
 - All builds pass (typecheck + lint + production build).
 - Local Docker UI verified on `http://localhost:3000`.
-- Latest committed baseline: `8243451 feat: add meeting operations prototype`.
-- **All work since that commit is uncommitted**, including: CRM daily tasks system, finance dashboard, attendance deductions, Projects in Market form redesign, per-field voice input, Ads duplicate detection, admin meetings tab, extra tasks, lead source groups, CRM settings consolidation.
 
 ## Pending / next steps
 
-1. **Commit** all uncommitted changes.
-2. **Admin submissions view** — admin can't yet see Projects in Market submissions.
-3. **CRM Performance** — verify assessment count reflects new multi-submission model.
-4. **History workspace** — old submissions with legacy field names gracefully show only filled fields (confirmed by filter `([, v]) => v`).
-5. **Backend phase** — Ads post-date server verification, real auth, RBAC, persistent storage.
+1. **Admin submissions view** — admin can't yet see Projects in Market submissions.
+2. **CRM Performance** — verify assessment count reflects new multi-submission model.
+3. **History workspace** — old submissions with legacy field names gracefully show only filled fields (confirmed by filter `([, v]) => v`).
+4. **Backend phase** — Ads post-date server verification, real auth, RBAC, persistent storage.
 
 ## Installed project skills
 

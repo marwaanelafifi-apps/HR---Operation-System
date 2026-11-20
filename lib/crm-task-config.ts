@@ -4,7 +4,8 @@
 
 export type AssessmentFieldKey =
   | "projectName" | "companyName" | "previousWork" | "location"
-  | "projectArea" | "projectDetails" | "unitTypes" | "pricesAndAcres"
+  | "projectArea" | "projectDetails" | "unitTable"
+  | "unitTypes" | "pricesAndAcres"   // legacy, superseded by unitTable
   | "paymentPlan" | "finishingType" | "construction" | "deliveryDate"
   | "maintenance" | "investorType" | "managementAndOperations"
   | "termsOfContract" | "sellingPoints" | "weaknessPoints" | "additionalNotes"
@@ -16,7 +17,7 @@ export interface KnowledgeFieldConfig {
   labelAr: string;
   enabled: boolean;
   required?: boolean;
-  fieldType?: "text" | "date" | "dropdown" | "textarea";
+  fieldType?: "text" | "date" | "dropdown" | "textarea" | "unitTable";
   options?: string[];
   layout?: "full" | "right"; // full = spans both columns, right = starts at col 2
 }
@@ -82,8 +83,7 @@ const DEFAULT_FIELDS: KnowledgeFieldConfig[] = [
   { key: "location",               labelEn: "Location",                           labelAr: "الموقع",                    enabled: true,  required: true,  fieldType: "textarea" },
   { key: "projectArea",            labelEn: "Project Acres",                      labelAr: "مساحة المشروع",             enabled: true,  required: true,  fieldType: "textarea" },
   { key: "projectDetails",         labelEn: "Project Details & Facilities",       labelAr: "تفاصيل المشروع والمرافق",   enabled: true,  required: true,  fieldType: "textarea" },
-  { key: "unitTypes",              labelEn: "Unit Types",                         labelAr: "أنواع الوحدات",             enabled: true,  required: true,  fieldType: "textarea" },
-  { key: "pricesAndAcres",         labelEn: "Prices & Acres",                     labelAr: "الأسعار والمساحات",         enabled: true,  required: true,  fieldType: "textarea" },
+  { key: "unitTable",              labelEn: "Unit Types, Built up Areas & Prices", labelAr: "أنواع الوحدات والمساحات والأسعار", enabled: true, required: true, fieldType: "unitTable", layout: "full" },
   { key: "paymentPlan",            labelEn: "Payment Plan",                       labelAr: "خطة السداد",                enabled: true,  required: true,  fieldType: "textarea", layout: "full" },
   { key: "finishingType",          labelEn: "Finishing Type",                     labelAr: "نوع التشطيب",               enabled: true,  required: true,  fieldType: "dropdown",
     options: ["Fully Finished Furnished", "Fully Finished", "Semi Finished", "Flexi Finished", "Core, Shell"] },

@@ -2,32 +2,41 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle, Calendar, Check, ChevronLeft, ChevronRight,
-  Plus, Trash2, Users, X,
+  AlertTriangle, Check, ChevronLeft, ChevronRight,
+  Minus, Plus, Scale, Trash2, Users, X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DatePicker } from "@/components/ui/date-picker";
+import { UnitTableView } from "@/components/ui/unit-table-editor";
 import {
-  addExtraTask, deleteExtraTask, getDayPerformance,
-  getCustomTaskCompletion, loadCRMDeductions, loadExtraTasks, onCRMChanged,
-  taskForEmployeeOnDate, tasksForEmployeeOnDate,
-  type AdsTaskData, type KnowledgeTaskData, type CallsTaskData, type RotationTaskData, type DailyTask,
+  addAdjustment, addExtraTask, adjustmentsForEmployeeInMonth, adjustmentsForEmployeeOnDate,
+  adjustmentTotals, deleteAdjustment, deleteExtraTask, getDayPerformance,
+  getCustomTaskCompletion, loadExtraTasks, onCRMChanged,
+  requestsForEmployeeOnDate, taskForEmployeeOnDate, tasksForEmployeeOnDate,
+  type AdjustmentKind, type AdsTaskData, type CRMAdjustment, type CRMRequest,
+  type KnowledgeTaskData, type CallsTaskData, type RotationTaskData, type DailyTask,
 } from "@/lib/crm-store";
 import { customTaskAppliesToDate, loadCRMTaskConfig } from "@/lib/crm-task-config";
-import { loadRequests } from "@/lib/requests-store";
+import { loadRequests, type VisitRequest } from "@/lib/requests-store";
 import { employees } from "@/lib/mock-data";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
-function todayISO() { return new Date().toISOString().slice(0, 10); }
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function meetingsForEmployee(employeeName: string, date: string): VisitRequest[] {
+  return loadRequests().visits.filter(v =>
+    v.employeeName === employeeName && v.date === date
+  );
+}
 
 function countMeetingsForEmployee(employeeName: string, date: string): number {
-  return loadRequests().visits.filter(v =>
-    v.employeeName === employeeName &&
-    v.date === date &&
-    (v.createdDate ?? v.date) === date
-  ).length;
+  return meetingsForEmployee(employeeName, date).length;
 }
 
 function daysInMonth(year: number, month: number) {
@@ -61,8 +70,304 @@ const labelCls = "mb-1.5 block text-xs font-semibold uppercase tracking-wide tex
 // ── Sales employees list ──────────────────────────────────────────────────────
 const SALES_EMPLOYEES = employees.filter(e => e.department === "Sales");
 
+// ── Deduction / bonus helpers ─────────────────────────────────────────────────
+const DAY_AMOUNTS = [0.25, 0.5, 1, 2] as const;
+
+/** "¼ day" / "½ day" / "2 days" — day units, not currency. */
+function fmtDays(n: number): string {
+  if (n === 0.25) return "¼ day";
+  if (n === 0.5) return "½ day";
+  if (n === 0.75) return "¾ day";
+  return `${n} ${n === 1 ? "day" : "days"}`;
+}
+
+/** Compact form for tiles and table cells: "1.5d". */
+function fmtD(n: number): string {
+  return `${Number(n.toFixed(2))}d`;
+}
+
+function netTone(net: number): string {
+  if (net > 0) return "text-emerald-700 dark:text-emerald-400";
+  if (net < 0) return "text-rose-600 dark:text-rose-400";
+  return "text-slate-400";
+}
+
+function netLabel(net: number): string {
+  if (net === 0) return "—";
+  return `${net > 0 ? "+" : "−"}${fmtD(Math.abs(net))}`;
+}
+
+// ── Deductions & bonuses panel ────────────────────────────────────────────────
+function AdjustmentsPanel({
+  items, title, onAdd, emptyHint,
+}: {
+  items: CRMAdjustment[];
+  title: string;
+  onAdd?: () => void;
+  emptyHint?: string;
+}) {
+  const totals = adjustmentTotals(items);
+
+  return (
+    <div className="rounded-2xl border border-[#DCE9E6] bg-white dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex flex-wrap items-center gap-3 border-b border-[#DCE9E6] px-5 py-3.5 dark:border-slate-700">
+        <Scale className="h-4 w-4 text-slate-400" />
+        <h3 className="text-sm font-semibold text-slate-900 dark:text-white">{title}</h3>
+        <div className="ml-auto flex items-center gap-4 text-xs">
+          <span className="text-slate-400">
+            Deductions <span className="font-semibold text-rose-600 dark:text-rose-400">{fmtD(totals.deduction)}</span>
+          </span>
+          <span className="text-slate-400">
+            Bonuses <span className="font-semibold text-emerald-700 dark:text-emerald-400">{fmtD(totals.bonus)}</span>
+          </span>
+          <span className="rounded-lg bg-[#F5F8F7] px-2.5 py-1 dark:bg-slate-800">
+            <span className="text-slate-400">Net </span>
+            <span className={`font-semibold ${netTone(totals.net)}`}>{netLabel(totals.net)}</span>
+          </span>
+          {onAdd && (
+            <Button size="sm" variant="outline" onClick={onAdd}>
+              <Plus className="h-3 w-3" /> Add
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {items.length === 0 ? (
+        <p className="px-5 py-5 text-sm text-slate-400">{emptyHint ?? "No deductions or bonuses recorded."}</p>
+      ) : (
+        <div className="divide-y divide-[#DCE9E6] dark:divide-slate-800">
+          {items.map(a => {
+            const isBonus = a.kind === "bonus";
+            return (
+              <div key={a.id} className="flex items-start gap-3 px-5 py-3.5">
+                <span className={`mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full ${isBonus ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400" : "bg-rose-50 text-rose-600 dark:bg-rose-950 dark:text-rose-400"}`}>
+                  {isBonus ? <Plus className="h-3.5 w-3.5" /> : <Minus className="h-3.5 w-3.5" />}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`text-sm font-semibold ${isBonus ? "text-emerald-700 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
+                      {isBonus ? "Bonus" : "Deduction"} · {fmtDays(a.days)}
+                    </span>
+                    <span className="text-xs text-slate-400">{friendlyDate(a.date)}</span>
+                  </div>
+                  <p className="mt-0.5 text-sm leading-6 text-slate-700 dark:text-slate-200" dir={/[؀-ۿ]/.test(a.note) ? "rtl" : "ltr"}>{a.note}</p>
+                  <p className="mt-0.5 text-xs text-slate-400">By {a.createdBy} · {new Date(a.createdAt).toLocaleDateString()}</p>
+                </div>
+                <button
+                  onClick={() => deleteAdjustment(a.id)}
+                  aria-label="Delete record"
+                  className="mt-0.5 text-slate-300 transition hover:text-rose-500 dark:text-slate-600"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Add deduction / bonus modal ───────────────────────────────────────────────
+function AdjustmentModal({ emp, defaultDate, onClose }: {
+  emp: typeof SALES_EMPLOYEES[0];
+  defaultDate: string;
+  onClose: () => void;
+}) {
+  const [kind, setKind] = useState<AdjustmentKind>("deduction");
+  const [date, setDate] = useState(defaultDate);
+  const [days, setDays] = useState<number>(0.5);
+  const [note, setNote] = useState("");
+  const isBonus = kind === "bonus";
+
+  function handleSubmit() {
+    if (!note.trim() || days <= 0) return;
+    addAdjustment({
+      employeeId: emp.id,
+      employeeName: emp.name,
+      date,
+      kind,
+      days,
+      note: note.trim(),
+      createdBy: "Manager",
+    });
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+      <div className="w-full max-w-lg rounded-2xl border border-[#DCE9E6] bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+        <div className="flex items-center justify-between border-b border-[#DCE9E6] px-6 py-4 dark:border-slate-700">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Deduction / Bonus — {emp.name}</h2>
+          <button onClick={onClose} aria-label="Close" className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-100 dark:hover:bg-slate-800"><X className="h-4 w-4" /></button>
+        </div>
+
+        <div className="space-y-4 p-6">
+          <div>
+            <label className={labelCls}>Type</label>
+            <div className="flex gap-2">
+              {([
+                { k: "deduction" as const, label: "Deduction", on: "border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-300" },
+                { k: "bonus" as const, label: "Bonus", on: "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" },
+              ]).map(({ k, label, on }) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setKind(k)}
+                  className={`flex-1 rounded-xl border p-3 text-sm font-semibold transition ${kind === k ? on : "border-[#DCE9E6] text-slate-500 hover:border-[#B7D9D3] dark:border-slate-700"}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className={labelCls}>Date</label>
+            <DatePicker value={date} onChange={setDate} max={todayISO()} />
+          </div>
+
+          <div>
+            <label className={labelCls}>Amount (days)</label>
+            <div className="flex gap-2">
+              {DAY_AMOUNTS.map(d => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => setDays(d)}
+                  className={`flex-1 rounded-xl border p-3 text-sm font-semibold transition ${days === d ? "border-[#0B4F4B] bg-[#E8F3F1] text-[#0B4F4B] dark:border-[#2E7D76] dark:bg-[#0B2927] dark:text-[#8FD4C6]" : "border-[#DCE9E6] text-slate-500 hover:border-[#B7D9D3] dark:border-slate-700"}`}
+                >
+                  {fmtDays(d)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className={labelCls}>Reason / note *</label>
+            <textarea
+              rows={3}
+              value={note}
+              onChange={e => setNote(e.target.value)}
+              dir={/[؀-ۿ]/.test(note) ? "rtl" : "ltr"}
+              placeholder={isBonus ? "Why does this employee deserve the bonus?" : "Why is this deduction applied?"}
+              className={`${inputCls} resize-none`}
+            />
+            <p className="mt-1.5 text-xs text-slate-400">
+              {isBonus
+                ? "This bonus will appear in the finance record and attendance calendar."
+                : "This deduction will appear in the finance record and attendance calendar."}
+            </p>
+          </div>
+
+          <div className="flex justify-end gap-3 border-t border-[#DCE9E6] pt-4 dark:border-slate-700">
+            <Button variant="outline" onClick={onClose}>Cancel</Button>
+            <Button onClick={handleSubmit} disabled={!note.trim()}>
+              <Check className="h-4 w-4" /> Save {isBonus ? "Bonus" : "Deduction"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Requests detail panel ─────────────────────────────────────────────────────
+function RequestsDetail({ requests, target }: { requests: CRMRequest[]; target: number }) {
+  const [open, setOpen] = useState(false);
+  const count = requests.length;
+  const tone = count >= target ? "success" : count > 0 ? "warning" : "default";
+  const label = count >= target ? "On target" : count > 0 ? "Partial" : "None";
+  return (
+    <div className="mb-3 rounded-xl border border-[#DCE9E6] dark:border-slate-700">
+      <button
+        onClick={() => { if (count > 0) setOpen(o => !o); }}
+        className={`flex w-full items-center gap-3 p-3 ${count > 0 ? "cursor-pointer" : "cursor-default"}`}
+      >
+        <div className="flex-1 text-left">
+          <p className="text-xs text-slate-400">Client Requests</p>
+          <p className="text-xl font-semibold text-slate-900 dark:text-white">
+            {count}<span className="text-sm font-normal text-slate-400">/{target}</span>
+          </p>
+        </div>
+        <Badge tone={tone}>{label}</Badge>
+        {count > 0 && (
+          <span className="text-xs text-slate-400">{open ? "▲" : "▼"}</span>
+        )}
+      </button>
+      {open && count > 0 && (
+        <div className="border-t border-[#DCE9E6] dark:border-slate-700">
+          {requests.map((r, i) => (
+            <div key={r.id} className={`px-3 py-2.5 text-xs ${i < requests.length - 1 ? "border-b border-[#DCE9E6] dark:border-slate-700" : ""}`}>
+              <div className="mb-1 flex items-center gap-2">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#E8F3F1] text-[10px] font-bold text-[#0B4F4B] dark:bg-[#063C39] dark:text-[#8FD4C6]">{i + 1}</span>
+                <span className="font-semibold text-slate-800 dark:text-slate-100">{r.clientName}</span>
+                <span className="text-slate-400">·</span>
+                <span className="text-slate-500">{r.clientNumber}</span>
+              </div>
+              <div className="ml-7 flex flex-wrap gap-x-4 gap-y-1 text-slate-500">
+                <span><span className="font-medium text-slate-600 dark:text-slate-300">Source:</span> {r.leadSource}</span>
+                {r.budget && <span><span className="font-medium text-slate-600 dark:text-slate-300">Budget:</span> {r.budget}</span>}
+                {r.feedback && <span className="w-full"><span className="font-medium text-slate-600 dark:text-slate-300">Feedback:</span> {r.feedback}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Meetings detail panel ─────────────────────────────────────────────────────
+function MeetingsDetail({ meetings, done }: { meetings: VisitRequest[]; done: boolean }) {
+  const [open, setOpen] = useState(false);
+  const count = meetings.length;
+  return (
+    <div className="mb-4 rounded-xl border border-[#DCE9E6] dark:border-slate-700">
+      <button
+        onClick={() => { if (count > 0) setOpen(o => !o); }}
+        className={`flex w-full items-center gap-3 p-3 ${count > 0 ? "cursor-pointer" : "cursor-default"}`}
+      >
+        <div className="flex-1 text-left">
+          <p className="text-xs text-slate-400">Client Meetings</p>
+          <p className="text-xl font-semibold text-slate-900 dark:text-white">{count}</p>
+        </div>
+        <Badge tone={done ? "success" : "default"}>{done ? "Done" : "None"}</Badge>
+        {count > 0 && (
+          <span className="text-xs text-slate-400">{open ? "▲" : "▼"}</span>
+        )}
+      </button>
+      {open && count > 0 && (
+        <div className="border-t border-[#DCE9E6] dark:border-slate-700">
+          {meetings.map((m, i) => (
+            <div key={m.id} className={`px-3 py-2.5 text-xs ${i < meetings.length - 1 ? "border-b border-[#DCE9E6] dark:border-slate-700" : ""}`}>
+              <div className="mb-1 flex items-center gap-2">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#E8F3F1] text-[10px] font-bold text-[#0B4F4B] dark:bg-[#063C39] dark:text-[#8FD4C6]">{i + 1}</span>
+                <span className="font-semibold text-slate-800 dark:text-slate-100">{m.clientName}</span>
+                {m.status && (
+                  <Badge tone={m.status === "approved" ? "success" : m.status === "rejected" ? "danger" : "default"} className="ml-auto">
+                    {m.status}
+                  </Badge>
+                )}
+              </div>
+              <div className="ml-7 flex flex-wrap gap-x-4 gap-y-1 text-slate-500">
+                {m.projectName && <span><span className="font-medium text-slate-600 dark:text-slate-300">Project:</span> {m.projectName}</span>}
+                {m.zone && <span><span className="font-medium text-slate-600 dark:text-slate-300">Zone:</span> {m.zone}</span>}
+                {m.time && <span><span className="font-medium text-slate-600 dark:text-slate-300">Time:</span> {m.time}</span>}
+                {m.meetingLocation && <span><span className="font-medium text-slate-600 dark:text-slate-300">Location:</span> {m.meetingLocation}</span>}
+                {m.notes && <span className="w-full"><span className="font-medium text-slate-600 dark:text-slate-300">Notes:</span> {m.notes}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Day performance card ──────────────────────────────────────────────────────
-function DayPerfCard({ emp, date, onAssignTask }: { emp: typeof SALES_EMPLOYEES[0]; date: string; onAssignTask: () => void }) {
+function DayPerfCard({ emp, date, onAssignTask, onAddAdjustment }: { emp: typeof SALES_EMPLOYEES[0]; date: string; onAssignTask: () => void; onAddAdjustment: () => void }) {
   const cfg = loadCRMTaskConfig();
   const perf = getDayPerformance(emp.id, date, (d) => countMeetingsForEmployee(emp.name, d), cfg.requestsTarget, cfg.meetingsTarget, cfg.knowledgeTarget);
 
@@ -82,7 +387,10 @@ function DayPerfCard({ emp, date, onAssignTask }: { emp: typeof SALES_EMPLOYEES[
   const customCompletions = customTasks.map(ct => ({ task: ct, completion: getCustomTaskCompletion(emp.id, ct.id, date) }));
 
   const extraTasks = perf.extraTasks;
-  const deductions = perf.deductions;
+  const adjustments = adjustmentsForEmployeeOnDate(emp.id, date);
+
+  const requestsList = requestsForEmployeeOnDate(emp.id, date);
+  const meetingsList = meetingsForEmployee(emp.name, date);
 
   function TaskRow({ label, done, duration, children }: { label: string; done: boolean; duration?: number; children?: React.ReactNode }) {
     const [open, setOpen] = useState(false);
@@ -113,6 +421,7 @@ function DayPerfCard({ emp, date, onAssignTask }: { emp: typeof SALES_EMPLOYEES[
   }
 
   return (
+    <div className="space-y-4">
     <div className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
@@ -124,24 +433,8 @@ function DayPerfCard({ emp, date, onAssignTask }: { emp: typeof SALES_EMPLOYEES[
         </Button>
       </div>
 
-      <div className="mb-4 grid grid-cols-2 gap-3">
-        <div className="rounded-xl border border-[#DCE9E6] bg-[#F5F8F7] p-3 dark:border-slate-700 dark:bg-slate-800">
-          <p className="text-xs text-slate-400">Requests</p>
-          <p className="text-xl font-semibold text-slate-900 dark:text-white">{perf.requestsCount}<span className="text-sm font-normal text-slate-400">/{perf.requestsTarget}</span></p>
-          <Badge tone={perf.requestsCount >= perf.requestsTarget ? "success" : perf.requestsCount > 0 ? "warning" : "default"} className="mt-1">
-            {perf.requestsCount >= perf.requestsTarget ? "On target" : perf.requestsCount > 0 ? "Partial" : "None"}
-          </Badge>
-        </div>
-        <div className="rounded-xl border border-[#DCE9E6] bg-[#F5F8F7] p-3 dark:border-slate-700 dark:bg-slate-800">
-          <p className="text-xs text-slate-400">Meetings</p>
-          <p className="text-xl font-semibold text-slate-900 dark:text-white">
-            {countMeetingsForEmployee(emp.name, date)}
-          </p>
-          <Badge tone={perf.meetingsDone ? "success" : "default"} className="mt-1">
-            {perf.meetingsDone ? "Done" : "None"}
-          </Badge>
-        </div>
-      </div>
+      <RequestsDetail requests={requestsList} target={perf.requestsTarget} />
+      <MeetingsDetail meetings={meetingsList} done={perf.meetingsDone} />
 
       <div className="border-t border-[#DCE9E6] pt-3 dark:border-slate-700">
         <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Tasks</p>
@@ -178,7 +471,8 @@ function DayPerfCard({ emp, date, onAssignTask }: { emp: typeof SALES_EMPLOYEES[
                         </p>
                       </div>
                     ) : (
-                      <div className="space-y-1">
+                      <div className="space-y-2">
+                        <UnitTableView rows={kd.assessment?.unitTable ?? []} compact />
                         {([
                           ["Project Name", kd.assessment?.projectName],
                           ["Company Name", kd.assessment?.companyName],
@@ -200,9 +494,9 @@ function DayPerfCard({ emp, date, onAssignTask }: { emp: typeof SALES_EMPLOYEES[
                           ["Weakness Points", kd.assessment?.weaknessPoints],
                           ["Additional Notes", kd.assessment?.additionalNotes],
                         ] as [string, string][]).filter(([, v]) => v).map(([k, v]) => (
-                          <div key={k} className="flex gap-2">
-                            <span className="shrink-0 font-semibold text-slate-500">{k}:</span>
-                            <span className="text-slate-700 dark:text-slate-200">{v}</span>
+                          <div key={k} className="rounded-lg bg-white px-2.5 py-1.5 dark:bg-slate-900">
+                            <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">{k}</p>
+                            <p className="leading-5 text-slate-800 dark:text-slate-100" dir={/[؀-ۿ]/.test(v) ? "rtl" : "ltr"}>{v}</p>
                           </div>
                         ))}
                       </div>
@@ -257,22 +551,20 @@ function DayPerfCard({ emp, date, onAssignTask }: { emp: typeof SALES_EMPLOYEES[
         </div>
       )}
 
-      {deductions.length > 0 && (
-        <div className="mt-3 border-t border-[#DCE9E6] pt-3 dark:border-slate-700">
-          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-rose-500">Deductions</p>
-          {deductions.map(d => (
-            <div key={d.id} className="rounded-lg border border-rose-100 bg-rose-50 px-3 py-2 text-xs dark:border-rose-900 dark:bg-rose-950">
-              <p className="font-semibold text-rose-700 dark:text-rose-300">{d.deductionDays} day(s) — {d.reason}</p>
-            </div>
-          ))}
-        </div>
-      )}
+    </div>
+
+      <AdjustmentsPanel
+        items={adjustments}
+        title={`Deductions & Bonuses — ${friendlyDate(date)}`}
+        onAdd={onAddAdjustment}
+        emptyHint="Nothing recorded for this day."
+      />
     </div>
   );
 }
 
 // ── Month calendar grid ───────────────────────────────────────────────────────
-function MonthView({ emp, year, month, onDayClick }: { emp: typeof SALES_EMPLOYEES[0]; year: number; month: number; onDayClick: (date: string) => void }) {
+function MonthView({ emp, year, month, onDayClick, onAddAdjustment }: { emp: typeof SALES_EMPLOYEES[0]; year: number; month: number; onDayClick: (date: string) => void; onAddAdjustment: () => void }) {
   const today = todayISO();
   const dim = daysInMonth(year, month);
   const firstDow = new Date(year, month, 1).getDay();
@@ -290,6 +582,15 @@ function MonthView({ emp, year, month, onDayClick }: { emp: typeof SALES_EMPLOYE
     return result;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [emp, year, month, dim, today]);
+
+  // Deductions/bonuses keyed by day, so the calendar can flag both
+  const adjByDay = useMemo(() => {
+    const map: Record<string, CRMAdjustment[]> = {};
+    for (const a of adjustmentsForEmployeeInMonth(emp.id, `${year}-${String(month + 1).padStart(2, "0")}`)) {
+      (map[a.date] ??= []).push(a);
+    }
+    return map;
+  }, [emp, year, month]);
 
   // Monthly summary
   const summary = useMemo(() => {
@@ -309,9 +610,8 @@ function MonthView({ emp, year, month, onDayClick }: { emp: typeof SALES_EMPLOYE
     const tasksTotal = workdays * 4;
     const knowledgeTotal = days.reduce((s, d) => s + d.knowledgeCount, 0);
     const knowledgeTarget = workdays * cfg.knowledgeTarget;
-    const deductionDays = loadCRMDeductions().filter(d => d.employeeId === emp.id && d.date.startsWith(`${year}-${String(month + 1).padStart(2, "0")}`))
-      .reduce((s, d) => s + d.deductionDays, 0);
-    return { workdays, reqTotal, reqTarget, meetingsDone, tasksDone, tasksTotal, knowledgeTotal, knowledgeTarget, deductionDays };
+    const adj = adjustmentTotals(adjustmentsForEmployeeInMonth(emp.id, `${year}-${String(month + 1).padStart(2, "0")}`));
+    return { workdays, reqTotal, reqTarget, meetingsDone, tasksDone, tasksTotal, knowledgeTotal, knowledgeTarget, adj };
   }, [perfByDay, emp, year, month]);
 
   function cellColor(d: number): string {
@@ -337,11 +637,16 @@ function MonthView({ emp, year, month, onDayClick }: { emp: typeof SALES_EMPLOYE
           { label: "Meetings done", value: `${summary.meetingsDone}/${summary.workdays}`, sub: "days with ≥1 meeting" },
           { label: "Projects in Market", value: `${summary.knowledgeTotal}/${summary.knowledgeTarget}`, sub: `${Math.round((summary.knowledgeTotal / Math.max(1, summary.knowledgeTarget)) * 100)}% of target` },
           { label: "Tasks completed", value: `${summary.tasksDone}/${summary.tasksTotal}`, sub: `${Math.round((summary.tasksDone / Math.max(1, summary.tasksTotal)) * 100)}% completion` },
-          { label: "CRM deductions", value: `${summary.deductionDays}d`, sub: "deducted this month" },
-        ].map(({ label, value, sub }) => (
+          {
+            label: "Net balance",
+            value: netLabel(summary.adj.net),
+            sub: `${fmtD(summary.adj.bonus)} bonus · ${fmtD(summary.adj.deduction)} deduction`,
+            tone: netTone(summary.adj.net),
+          },
+        ].map(({ label, value, sub, tone }: { label: string; value: string; sub: string; tone?: string }) => (
           <div key={label} className="rounded-2xl border border-[#DCE9E6] bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</p>
-            <p className="mt-1.5 text-2xl font-semibold text-slate-950 dark:text-white">{value}</p>
+            <p className={`mt-1.5 text-2xl font-semibold ${tone ?? "text-slate-950 dark:text-white"}`}>{value}</p>
             <p className="mt-0.5 text-xs text-slate-400">{sub}</p>
           </div>
         ))}
@@ -365,7 +670,9 @@ function MonthView({ emp, year, month, onDayClick }: { emp: typeof SALES_EMPLOYE
             const isFuture = date > today;
             const weekend = isWeekend(year, month, d);
             const perf = perfByDay[d];
-            const hasDeduction = (perf?.deductions.length ?? 0) > 0;
+            const dayAdj = adjByDay[date] ?? [];
+            const hasDeduction = (perf?.deductions.length ?? 0) > 0 || dayAdj.some(a => a.kind === "deduction");
+            const hasBonus = dayAdj.some(a => a.kind === "bonus");
 
             const isClickable = !weekend && !isFuture;
             const CellTag = isClickable ? "button" : "div";
@@ -404,6 +711,7 @@ function MonthView({ emp, year, month, onDayClick }: { emp: typeof SALES_EMPLOYE
                       {perf.callsTaskDone && <span title="Calls" className="h-1.5 w-1.5 rounded-full bg-sky-500" />}
                       {perf.rotationTaskDone && <span title="Rotation" className="h-1.5 w-1.5 rounded-full bg-teal-500" />}
                       {hasDeduction && <span title="Deduction" className="h-1.5 w-1.5 rounded-full bg-rose-500" />}
+                      {hasBonus && <span title="Bonus" className="h-1.5 w-1.5 rounded-full bg-emerald-600" />}
                     </div>
                   </>
                 )}
@@ -423,6 +731,7 @@ function MonthView({ emp, year, month, onDayClick }: { emp: typeof SALES_EMPLOYE
           { color: "bg-sky-500", label: "Calls ✓" },
           { color: "bg-teal-500", label: "Rotation ✓" },
           { color: "bg-rose-500", label: "Deduction" },
+          { color: "bg-emerald-600", label: "Bonus" },
         ].map(({ color, label }) => (
           <div key={label} className="flex items-center gap-1.5">
             <span className={`h-2 w-2 rounded-full ${color}`} />
@@ -430,6 +739,15 @@ function MonthView({ emp, year, month, onDayClick }: { emp: typeof SALES_EMPLOYE
           </div>
         ))}
       </div>
+
+      {/* Deductions & bonuses this month */}
+      <AdjustmentsPanel
+        items={adjustmentsForEmployeeInMonth(emp.id, `${year}-${String(month + 1).padStart(2, "0")}`)
+          .sort((a, b) => a.date.localeCompare(b.date))}
+        title={`Deductions & Bonuses — ${MONTH_NAMES[month]} ${year}`}
+        onAdd={onAddAdjustment}
+        emptyHint="Nothing recorded this month."
+      />
 
       {/* Extra tasks this month */}
       <ExtraTasksList emp={emp} monthPrefix={`${year}-${String(month + 1).padStart(2, "0")}`} />
@@ -476,7 +794,8 @@ function ExtraTasksList({ emp, monthPrefix }: { emp: typeof SALES_EMPLOYEES[0]; 
 function AssignTaskModal({ emp, defaultDate, onClose }: { emp: typeof SALES_EMPLOYEES[0]; defaultDate: string; onClose: () => void }) {
   const [date, setDate] = useState(defaultDate);
   const [note, setNote] = useState("");
-  const [deduction, setDeduction] = useState<0 | 0.25 | 0.5 | 1>(0);
+  const [deduction, setDeduction] = useState<0 | 0.25 | 0.5 | 1 | 2 | 3>(0);
+  const [bonus, setBonus] = useState<0 | 0.25 | 0.5 | 1 | 2 | 3>(0);
   const [submitting, setSubmitting] = useState(false);
 
   function handleSubmit() {
@@ -490,8 +809,29 @@ function AssignTaskModal({ emp, defaultDate, onClose }: { emp: typeof SALES_EMPL
       createdBy: "Manager",
       deductionDays: deduction,
     });
+    // If a bonus was also set, save it as a separate adjustment
+    if (bonus > 0) {
+      addAdjustment({
+        employeeId: emp.id,
+        employeeName: emp.name,
+        date,
+        kind: "bonus",
+        days: bonus,
+        note: note.trim(),
+        createdBy: "Manager",
+      });
+    }
     onClose();
   }
+
+  const AMOUNTS = [
+    { v: 0 as const, label: "None" },
+    { v: 0.25 as const, label: "¼ day" },
+    { v: 0.5 as const, label: "0.5 day" },
+    { v: 1 as const, label: "1 day" },
+    { v: 2 as const, label: "2 days" },
+    { v: 3 as const, label: "3 days" },
+  ];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
@@ -503,7 +843,7 @@ function AssignTaskModal({ emp, defaultDate, onClose }: { emp: typeof SALES_EMPL
         <div className="space-y-4 p-6">
           <div>
             <label className={labelCls}>Date</label>
-            <input type="date" value={date} onChange={e => setDate(e.target.value)} max={todayISO()} className={inputCls} />
+            <DatePicker value={date} onChange={setDate} max={todayISO()} />
           </div>
           <div>
             <label className={labelCls}>Task / Note for {emp.name} *</label>
@@ -511,22 +851,39 @@ function AssignTaskModal({ emp, defaultDate, onClose }: { emp: typeof SALES_EMPL
               placeholder="Describe the task or explain why performance was below expectation…"
               className={`${inputCls} resize-none`} />
           </div>
-          <div>
-            <label className={labelCls}>Deduction</label>
-            <div className="flex gap-2">
-              {([0, 0.25, 0.5, 1] as const).map(d => (
-                <label key={d} className={`flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-xl border p-3 text-sm font-semibold transition ${deduction === d ? "border-[#0B4F4B] bg-[#E8F3F1] text-[#0B4F4B] dark:border-[#2E7D76] dark:bg-[#0B2927] dark:text-[#8FD4C6]" : "border-[#DCE9E6] text-slate-500 hover:border-[#B7D9D3] dark:border-slate-700"}`}>
-                  <input type="radio" name="deduction" value={d} checked={deduction === d} onChange={() => setDeduction(d)} className="sr-only" />
-                  {d === 0 ? "None" : d === 0.25 ? "¼ day" : `${d} day`}
-                </label>
-              ))}
+
+          {/* Deduction & Bonus side by side */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className={labelCls}>Deduction</label>
+              <div className="grid grid-cols-3 gap-1.5">
+                {AMOUNTS.map(({ v, label }) => (
+                  <label key={v} className={`flex cursor-pointer items-center justify-center rounded-xl border p-2.5 text-sm font-semibold transition ${deduction === v ? "border-rose-400 bg-rose-50 text-rose-600 dark:border-rose-700 dark:bg-rose-950 dark:text-rose-300" : "border-[#DCE9E6] text-slate-500 hover:border-rose-200 dark:border-slate-700"}`}>
+                    <input type="radio" name="deduction" value={v} checked={deduction === v} onChange={() => setDeduction(v)} className="sr-only" />
+                    {label}
+                  </label>
+                ))}
+              </div>
+              {deduction > 0 && (
+                <p className="mt-1.5 text-xs text-rose-500">Appears in finance & calendar.</p>
+              )}
             </div>
-            {deduction > 0 && (
-              <p className="mt-1.5 text-xs text-rose-600 dark:text-rose-400">
-                This deduction will appear in {emp.name}&apos;s finance record and attendance calendar.
-              </p>
-            )}
+            <div>
+              <label className={labelCls}>Bonus</label>
+              <div className="grid grid-cols-3 gap-1.5">
+                {AMOUNTS.map(({ v, label }) => (
+                  <label key={v} className={`flex cursor-pointer items-center justify-center rounded-xl border p-2.5 text-sm font-semibold transition ${bonus === v ? "border-emerald-400 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : "border-[#DCE9E6] text-slate-500 hover:border-emerald-200 dark:border-slate-700"}`}>
+                    <input type="radio" name="bonus" value={v} checked={bonus === v} onChange={() => setBonus(v)} className="sr-only" />
+                    {label}
+                  </label>
+                ))}
+              </div>
+              {bonus > 0 && (
+                <p className="mt-1.5 text-xs text-emerald-600">Appears in finance & calendar.</p>
+              )}
+            </div>
           </div>
+
           <div className="flex justify-end gap-3 border-t border-[#DCE9E6] pt-4 dark:border-slate-700">
             <Button variant="outline" onClick={onClose}>Cancel</Button>
             <Button onClick={handleSubmit} disabled={!note.trim() || submitting}>
@@ -547,7 +904,7 @@ function AllMonthView({ year, month, onEmpClick }: { year: number; month: number
   const monthPrefix = `${year}-${String(month + 1).padStart(2, "0")}`;
 
   const rows = useMemo(() => SALES_EMPLOYEES.map(emp => {
-    let reqTotal = 0, meetingsDone = 0, knowledgeTotal = 0, tasksDone = 0, tasksTotal = 0, deductionDays = 0;
+    let reqTotal = 0, meetingsDone = 0, knowledgeTotal = 0, tasksDone = 0, tasksTotal = 0;
     let workdays = 0;
     for (let d = 1; d <= dim; d++) {
       const date = isoDate(year, month, d);
@@ -563,10 +920,10 @@ function AllMonthView({ year, month, onEmpClick }: { year: number; month: number
       if (perf.rotationTaskDone) tasksDone++;
       tasksTotal += 4;
     }
-    deductionDays = loadCRMDeductions().filter(d => d.employeeId === emp.id && d.date.startsWith(monthPrefix)).reduce((s, d) => s + d.deductionDays, 0);
+    const adj = adjustmentTotals(adjustmentsForEmployeeInMonth(emp.id, monthPrefix));
     const reqTarget = workdays * cfg.requestsTarget;
     const knowledgeTarget = workdays * cfg.knowledgeTarget;
-    return { emp, workdays, reqTotal, reqTarget, meetingsDone, knowledgeTotal, knowledgeTarget, tasksDone, tasksTotal, deductionDays };
+    return { emp, workdays, reqTotal, reqTarget, meetingsDone, knowledgeTotal, knowledgeTarget, tasksDone, tasksTotal, adj };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [year, month, dim, today]);
 
@@ -584,13 +941,13 @@ function AllMonthView({ year, month, onEmpClick }: { year: number; month: number
         <table className="w-full min-w-[700px] text-sm">
           <thead>
             <tr className="border-b border-[#DCE9E6] bg-[#F5F8F7] dark:border-slate-700 dark:bg-slate-800">
-              {["Employee", "Requests", "Meetings", "Projects in Market", "Tasks", "Deductions"].map(h => (
+              {["Employee", "Requests", "Meetings", "Projects in Market", "Tasks", "Deduction", "Bonus", "Net"].map(h => (
                 <th key={h} className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-[#DCE9E6] dark:divide-slate-800">
-            {rows.map(({ emp, reqTotal, reqTarget, meetingsDone, workdays, knowledgeTotal, knowledgeTarget, tasksDone, tasksTotal, deductionDays }) => (
+            {rows.map(({ emp, reqTotal, reqTarget, meetingsDone, workdays, knowledgeTotal, knowledgeTarget, tasksDone, tasksTotal, adj }) => (
               <tr key={emp.id} onClick={() => onEmpClick(emp.id)} className="cursor-pointer transition hover:bg-[#F5F8F7] dark:hover:bg-slate-800/50">
                 <td className="px-5 py-3">
                   <p className="font-semibold text-slate-900 dark:text-white">{emp.name}</p>
@@ -616,9 +973,17 @@ function AllMonthView({ year, month, onEmpClick }: { year: number; month: number
                   <p className="text-[11px] text-slate-400">{pct(tasksDone, tasksTotal)}%</p>
                 </td>
                 <td className="px-5 py-3">
-                  <span className={deductionDays > 0 ? "font-semibold text-rose-600 dark:text-rose-400" : "text-slate-400"}>
-                    {deductionDays > 0 ? `${deductionDays}d` : "—"}
+                  <span className={adj.deduction > 0 ? "font-semibold text-rose-600 dark:text-rose-400" : "text-slate-400"}>
+                    {adj.deduction > 0 ? fmtD(adj.deduction) : "—"}
                   </span>
+                </td>
+                <td className="px-5 py-3">
+                  <span className={adj.bonus > 0 ? "font-semibold text-emerald-700 dark:text-emerald-400" : "text-slate-400"}>
+                    {adj.bonus > 0 ? fmtD(adj.bonus) : "—"}
+                  </span>
+                </td>
+                <td className="px-5 py-3">
+                  <span className={`font-semibold ${netTone(adj.net)}`}>{netLabel(adj.net)}</span>
                 </td>
               </tr>
             ))}
@@ -640,7 +1005,7 @@ function AllDayView({ date, onEmpClick }: { date: string; onEmpClick: (empId: st
         <table className="w-full min-w-[700px] text-sm">
           <thead>
             <tr className="border-b border-[#DCE9E6] bg-[#F5F8F7] dark:border-slate-700 dark:bg-slate-800">
-              {["Employee", "Requests", "Meetings", "Projects in Market", "Ads", "Calls", "Rotation", "Deductions"].map(h => (
+              {["Employee", "Requests", "Meetings", "Projects in Market", "Ads", "Calls", "Rotation", "Deduction / Bonus"].map(h => (
                 <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{h}</th>
               ))}
             </tr>
@@ -648,6 +1013,7 @@ function AllDayView({ date, onEmpClick }: { date: string; onEmpClick: (empId: st
           <tbody className="divide-y divide-[#DCE9E6] dark:divide-slate-800">
             {SALES_EMPLOYEES.map(emp => {
               const perf = getDayPerformance(emp.id, date, (d) => countMeetingsForEmployee(emp.name, d), cfg.requestsTarget, cfg.meetingsTarget, cfg.knowledgeTarget);
+              const adj = adjustmentTotals(adjustmentsForEmployeeOnDate(emp.id, date));
               function Cell({ done, label }: { done: boolean; label?: string }) {
                 return (
                   <td className="px-4 py-3">
@@ -678,9 +1044,14 @@ function AllDayView({ date, onEmpClick }: { date: string; onEmpClick: (empId: st
                   <Cell done={perf.callsTaskDone} />
                   <Cell done={perf.rotationTaskDone} />
                   <td className="px-4 py-3">
-                    <span className={perf.deductions.length > 0 ? "font-semibold text-rose-600 dark:text-rose-400" : "text-slate-400"}>
-                      {perf.deductions.length > 0 ? `${perf.deductions.reduce((s, d) => s + d.deductionDays, 0)}d` : "—"}
-                    </span>
+                    {adj.deduction === 0 && adj.bonus === 0 ? (
+                      <span className="text-slate-400">—</span>
+                    ) : (
+                      <span className="flex items-center gap-2 text-xs font-semibold">
+                        {adj.deduction > 0 && <span className="text-rose-600 dark:text-rose-400">−{fmtD(adj.deduction)}</span>}
+                        {adj.bonus > 0 && <span className="text-emerald-700 dark:text-emerald-400">+{fmtD(adj.bonus)}</span>}
+                      </span>
+                    )}
                   </td>
                 </tr>
               );
@@ -707,6 +1078,7 @@ export function CRMPerformanceWorkspace() {
   const [viewYear, setViewYear] = useState(todayDate.getFullYear());
   const [viewMonth, setViewMonth] = useState(todayDate.getMonth());
   const [showAssignModal, setShowAssignModal] = useState(false);
+  const [showAdjustModal, setShowAdjustModal] = useState(false);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
@@ -769,14 +1141,7 @@ export function CRMPerformanceWorkspace() {
         {/* Date / month picker */}
         {viewMode === "day" ? (
           <div className="flex items-center gap-2">
-            <Calendar className="h-4 w-4 text-slate-400" />
-            <input
-              type="date"
-              value={selectedDate}
-              max={today}
-              onChange={e => setSelectedDate(e.target.value)}
-              className="rounded-xl border border-[#DCE9E6] bg-white px-4 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
-            />
+            <DatePicker value={selectedDate} max={today} onChange={setSelectedDate} className="w-48" />
           </div>
         ) : (
           <div className="flex items-center gap-1 rounded-2xl border border-[#DCE9E6] bg-white p-1 dark:border-slate-800 dark:bg-slate-900">
@@ -786,11 +1151,16 @@ export function CRMPerformanceWorkspace() {
           </div>
         )}
 
-        {/* Assign task button — only for a specific employee */}
+        {/* Manager actions — only for a specific employee */}
         {selectedEmpId !== "all" && (
-          <Button onClick={() => setShowAssignModal(true)} className="ml-auto">
-            <Plus className="h-4 w-4" /> Assign Extra Task
-          </Button>
+          <div className="ml-auto flex items-center gap-2">
+            <Button variant="outline" onClick={() => setShowAssignModal(true)}>
+              <Plus className="h-4 w-4" /> Assign Extra Task
+            </Button>
+            <Button onClick={() => setShowAdjustModal(true)}>
+              <Scale className="h-4 w-4" /> Deduction / Bonus
+            </Button>
+          </div>
         )}
       </div>
 
@@ -802,9 +1172,20 @@ export function CRMPerformanceWorkspace() {
           <AllMonthView year={viewYear} month={viewMonth} onEmpClick={(id) => { setSelectedEmpId(id); }} />
         )
       ) : viewMode === "day" ? (
-        <DayPerfCard emp={selectedEmp} date={selectedDate} onAssignTask={() => setShowAssignModal(true)} />
+        <DayPerfCard
+          emp={selectedEmp}
+          date={selectedDate}
+          onAssignTask={() => setShowAssignModal(true)}
+          onAddAdjustment={() => setShowAdjustModal(true)}
+        />
       ) : (
-        <MonthView emp={selectedEmp} year={viewYear} month={viewMonth} onDayClick={(date) => { setSelectedDate(date); setViewMode("day"); }} />
+        <MonthView
+          emp={selectedEmp}
+          year={viewYear}
+          month={viewMonth}
+          onDayClick={(date) => { setSelectedDate(date); setViewMode("day"); }}
+          onAddAdjustment={() => setShowAdjustModal(true)}
+        />
       )}
 
       {showAssignModal && selectedEmpId !== "all" && selectedEmp && (
@@ -812,6 +1193,14 @@ export function CRMPerformanceWorkspace() {
           emp={selectedEmp}
           defaultDate={viewMode === "day" ? selectedDate : today}
           onClose={() => setShowAssignModal(false)}
+        />
+      )}
+
+      {showAdjustModal && selectedEmpId !== "all" && selectedEmp && (
+        <AdjustmentModal
+          emp={selectedEmp}
+          defaultDate={viewMode === "day" ? selectedDate : today}
+          onClose={() => setShowAdjustModal(false)}
         />
       )}
     </div>

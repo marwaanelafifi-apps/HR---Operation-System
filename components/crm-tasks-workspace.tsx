@@ -3,20 +3,25 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
-  AlertTriangle, Check, ChevronRight, ExternalLink, Lock, Mic, MicOff, Paperclip, Phone, Plus, X,
+  AlertTriangle, Building2, Check, ChevronRight, ClipboardList, ExternalLink, Flame, Lock,
+  Megaphone, Mic, MicOff, Paperclip, Phone, Plus, RotateCcw, Target,
+  CheckCircle2, TrendingUp, X,
 } from "lucide-react";
+import { DatePicker } from "@/components/ui/date-picker";
+import { UnitTableEditor, emptyUnitRow } from "@/components/ui/unit-table-editor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { addVisit, loadRequests, onRequestsChanged, type VisitRequest } from "@/lib/requests-store";
 import {
-  addDailyTask, addCRMRequest, addCustomTaskCompletion, detectSocialPlatform,
-  getCustomTaskCompletion, isAssessmentBlocked, isValidSocialUrl,
+  addDailyTask, addCRMRequest, addCustomTaskCompletion, adjustmentsForEmployeeOnDate,
+  detectSocialPlatform, getCustomTaskCompletion, isAssessmentBlocked, isValidSocialUrl,
   markAssessmentBlocked, onCRMChanged, requestsForEmployeeOnDate,
   taskForEmployeeOnDate, tasksCountForEmployeeOnDate,
   extraTasksForEmployee, acknowledgeExtraTask,
   LEAD_SOURCE_GROUPS,
-  type AdsTaskData, type CallsTaskData, type CRMRequest, type DailyTask,
+  type AdsTaskData, type CallsTaskData, type CRMAdjustment, type CRMRequest, type DailyTask,
   type ExtraTask, type KnowledgeTaskData, type ProjectAssessment, type RotationTaskData,
+  type UnitRow,
 } from "@/lib/crm-store";
 import {
   loadCRMTaskConfig, onCRMTaskConfigChanged, customTaskAppliesToDate,
@@ -29,7 +34,7 @@ const ME_ID = "ahmed-khalil";
 const ME_NAME = "Ahmed Khalil";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function todayISO() { return new Date().toISOString().slice(0, 10); }
+function todayISO() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
 
 function friendlyDate(iso: string) {
   return new Date(`${iso}T00:00`).toLocaleDateString("en", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
@@ -162,7 +167,8 @@ declare global {
 const EMPTY_ASSESSMENT: ProjectAssessment = {
   salesName: ME_NAME, date: todayISO(),
   projectName: "", companyName: "", previousWork: "", location: "",
-  projectArea: "", projectDetails: "", unitTypes: "", pricesAndAcres: "",
+  projectArea: "", projectDetails: "",
+  unitTable: [emptyUnitRow()],
   paymentPlan: "", finishingType: "", construction: "", deliveryDate: "",
   maintenance: "", investorType: "", managementAndOperations: "",
   termsOfContract: "", sellingPoints: "", weaknessPoints: "", additionalNotes: "",
@@ -185,6 +191,25 @@ function KnowledgeTaskForm({ date, onDone, fieldCfg }: { date: string; onDone: (
     setForm(prev => ({ ...prev, [key]: val }));
   }
 
+  function setUnitRow(idx: number, patch: Partial<UnitRow>) {
+    setForm(prev => {
+      const rows = [...(prev.unitTable ?? [])];
+      rows[idx] = { ...rows[idx], ...patch };
+      return { ...prev, unitTable: rows };
+    });
+  }
+
+  function addUnitRow() {
+    setForm(prev => ({ ...prev, unitTable: [...(prev.unitTable ?? []), emptyUnitRow()] }));
+  }
+
+  function removeUnitRow(idx: number) {
+    setForm(prev => {
+      const rows = (prev.unitTable ?? []).filter((_, i) => i !== idx);
+      return { ...prev, unitTable: rows.length ? rows : [emptyUnitRow()] };
+    });
+  }
+
   function startVoice(key: keyof ProjectAssessment) {
     if (recordingField) { recognitionRef.current?.stop(); }
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -193,7 +218,7 @@ function KnowledgeTaskForm({ date, onDone, fieldCfg }: { date: string; onDone: (
     rec.lang = voiceLang === "ar" ? "ar-EG" : "en-US";
     rec.continuous = true;
     rec.interimResults = true;
-    const prefix = (form[key] ?? "").trim();
+    const prefix = (typeof form[key] === "string" ? (form[key] as string) : "").trim();
     let final = "";
     rec.onresult = (e) => {
       let interim = "";
@@ -225,10 +250,11 @@ function KnowledgeTaskForm({ date, onDone, fieldCfg }: { date: string; onDone: (
   // Textarea fields with voice support (all textareas — text/dropdown/date fields excluded naturally)
   function Field({ label, ar: _ar, k, placeholder, fieldType, options, required: isRequired, stretch }: {
     label: string; ar: string; k: keyof ProjectAssessment;
-    placeholder?: string; fieldType?: "text" | "date" | "dropdown" | "textarea"; options?: string[]; required?: boolean; stretch?: boolean;
+    placeholder?: string; fieldType?: "text" | "date" | "dropdown" | "textarea" | "unitTable"; options?: string[]; required?: boolean; stretch?: boolean;
   }) {
     const isVoiceField = fieldType === "textarea" && voiceSupported;
     const isThisRecording = recordingField === k;
+    const sv = typeof form[k] === "string" ? (form[k] as string) : "";
     return (
       <div className={stretch ? "flex h-full flex-col" : ""}>
         <div className="mb-1.5 flex items-center justify-between">
@@ -252,19 +278,26 @@ function KnowledgeTaskForm({ date, onDone, fieldCfg }: { date: string; onDone: (
             </button>
           )}
         </div>
-        {fieldType === "dropdown" && options ? (
-          <select value={form[k]} onChange={e => setField(k, e.target.value)}
+        {fieldType === "unitTable" ? (
+          <UnitTableEditor
+            rows={form.unitTable ?? []}
+            onRow={setUnitRow}
+            onAdd={addUnitRow}
+            onRemove={removeUnitRow}
+          />
+        ) : fieldType === "dropdown" && options ? (
+          <select value={sv} onChange={e => setField(k, e.target.value)}
             className={`${inputCls} bg-white dark:bg-slate-900`}>
             <option value="">— Select —</option>
             {options.map(o => <option key={o} value={o}>{o}</option>)}
           </select>
         ) : fieldType === "textarea" ? (
-          <textarea rows={3} value={form[k]} onChange={e => setField(k, e.target.value)} placeholder={placeholder}
+          <textarea rows={3} value={sv} onChange={e => setField(k, e.target.value)} placeholder={placeholder}
             className={`${inputCls} resize-none${stretch ? " flex-1" : ""}${isThisRecording ? " ring-2 ring-rose-300 dark:ring-rose-700" : ""}`} />
         ) : fieldType === "date" ? (
-          <input type="date" value={form[k]} onChange={e => setField(k, e.target.value)} className={inputCls} />
+          <DatePicker value={sv} onChange={v => setField(k, v)} />
         ) : (
-          <input type="text" value={form[k]} onChange={e => setField(k, e.target.value)} placeholder={placeholder} className={inputCls} />
+          <input type="text" value={sv} onChange={e => setField(k, e.target.value)} placeholder={placeholder} className={inputCls} />
         )}
       </div>
     );
@@ -1073,6 +1106,26 @@ function PriorityAssessmentModal({ task, date, onDone }: { task: CustomTask; dat
   );
 }
 
+// ── Task icon map ─────────────────────────────────────────────────────────────
+const TASK_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  ads:       Megaphone,
+  knowledge: Building2,
+  calls:     Phone,
+  rotation:  RotateCcw,
+  extra:     ClipboardList,
+};
+
+function motivationMessage(pct: number): { text: string; tone: "neutral" | "warn" | "good" | "great" } {
+  const h = new Date().getHours();
+  if (pct === 100) return { text: "All targets hit — outstanding work today!", tone: "great" };
+  if (pct >= 75)  return { text: "Almost there — one final push to close the day strong.", tone: "good" };
+  if (pct >= 50)  return { text: "Halfway done — stay focused and keep going.", tone: "good" };
+  if (pct >= 25)  return { text: "Good start — keep the momentum going.", tone: "neutral" };
+  if (h >= 16)    return { text: "Afternoon check — still time to hit your targets today.", tone: "warn" };
+  if (h >= 12)    return { text: "Pick up the pace — targets are waiting.", tone: "warn" };
+  return { text: "Fresh start — your first task today awaits.", tone: "neutral" };
+}
+
 // ── Main workspace ────────────────────────────────────────────────────────────
 type ModalType = "ads" | "knowledge" | "calls" | "rotation" | "request" | "meeting" | null;
 
@@ -1085,11 +1138,12 @@ type LiveData = {
   meetingsToday: number;
   todayVisits: VisitRequest[];
   extraTasks: ExtraTask[];
+  adjustments: CRMAdjustment[];
 };
 
 const EMPTY_LIVE: LiveData = {
   requests: [], adsTask: undefined, knowledgeCount: 0,
-  callsTask: undefined, rotationTask: undefined, meetingsToday: 0, todayVisits: [], extraTasks: [],
+  callsTask: undefined, rotationTask: undefined, meetingsToday: 0, todayVisits: [], extraTasks: [], adjustments: [],
 };
 
 export function CRMTasksWorkspace() {
@@ -1111,6 +1165,7 @@ export function CRMTasksWorkspace() {
         meetingsToday: countMeetingsToday(today),
         todayVisits: loadRequests().visits.filter(v => v.employeeName === ME_NAME && v.date === today),
         extraTasks: extraTasksForEmployee(ME_ID).filter(t => t.assignedDate === today),
+        adjustments: adjustmentsForEmployeeOnDate(ME_ID, today),
       });
       setCfg(loadCRMTaskConfig());
       setReady(true);
@@ -1124,7 +1179,7 @@ export function CRMTasksWorkspace() {
 
   if (!ready || !cfg) return null;
 
-  const { requests, adsTask, knowledgeCount, callsTask, rotationTask, meetingsToday, todayVisits, extraTasks } = live;
+  const { requests, adsTask, knowledgeCount, callsTask, rotationTask, meetingsToday, todayVisits, extraTasks, adjustments } = live;
   const knowledgeDone = knowledgeCount >= cfg.knowledgeTarget;
 
   // Custom tasks that apply today come FIRST (highest priority)
@@ -1196,18 +1251,69 @@ export function CRMTasksWorkspace() {
       lockMode: false,
       customId: undefined as string | undefined,
     },
-  ].filter(Boolean) as { key: ModalType; num: number; title: string; desc: string; done: boolean; completedAt?: string; dueTime?: string; priority: boolean; lockMode: boolean; customId?: string }[];
+    // Extra tasks assigned by admin — appear as full task cards
+    ...extraTasks.map((et, i) => {
+      const assignedTime = completedAt(et.createdAt);
+      const deductionNote = et.deductionDays > 0 ? ` · −${et.deductionDays}d deduction` : "";
+      return {
+        key: `extra-${et.id}` as ModalType,
+        num: todayCustomTasks.length + (cfg.ads.enabled ? 1 : 0) + (cfg.knowledge.enabled ? 1 : 0) + (cfg.calls.enabled ? 1 : 0) + (cfg.rotation.enabled ? 1 : 0) + i + 1,
+        title: et.note,
+        desc: `Assigned by manager at ${assignedTime}${deductionNote}`,
+        done: et.acknowledged,
+        completedAt: undefined as string | undefined,
+        dueTime: undefined as string | undefined,
+        priority: false,
+        lockMode: false,
+        customId: undefined as string | undefined,
+        extraId: et.id,
+      };
+    }),
+  ].filter(Boolean) as { key: ModalType; num: number; title: string; desc: string; done: boolean; completedAt?: string; dueTime?: string; priority: boolean; lockMode: boolean; customId?: string; extraId?: string }[];
 
   const tasks = allTasks;
   const doneCount = tasks.filter(t => t.done).length;
+  const totalTasks = tasks.length || 4;
+  const pct = Math.round((doneCount / totalTasks) * 100);
+  const { text: motivText, tone: motivTone } = motivationMessage(pct);
+
+  const motivColors = {
+    neutral: "bg-slate-50 border-slate-200 text-slate-600 dark:bg-slate-800/60 dark:border-slate-700 dark:text-slate-300",
+    warn:    "bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-400",
+    good:    "bg-teal-50 border-teal-200 text-teal-700 dark:bg-teal-950/30 dark:border-teal-800 dark:text-teal-400",
+    great:   "bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-950/30 dark:border-emerald-800 dark:text-emerald-400",
+  }[motivTone];
+
+  const MotivIcon = { neutral: Flame, warn: Target, good: TrendingUp, great: CheckCircle2 }[motivTone];
 
   return (
     <div className="pb-10">
       {/* Header */}
       <header className="mb-6">
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#0B4F4B] dark:text-[#8FD4C6]">CRM</p>
-        <h1 className="mt-1 text-3xl font-semibold tracking-[-0.03em] text-slate-950 dark:text-white sm:text-4xl">Daily Tasks</h1>
-        <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">{friendlyDate(today)}</p>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#0B4F4B] dark:text-[#8FD4C6]">CRM</p>
+            <h1 className="mt-1 text-3xl font-semibold tracking-[-0.03em] text-slate-950 dark:text-white sm:text-4xl">Daily Tasks</h1>
+            <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">{friendlyDate(today)}</p>
+          </div>
+          {/* Progress summary */}
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl font-bold text-slate-900 dark:text-white">{doneCount}<span className="text-base font-normal text-slate-400">/{totalTasks}</span></span>
+              <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${pct === 100 ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400" : "border-[#DCE9E6] bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"}`}>
+                {pct}% complete
+              </span>
+            </div>
+            <div className="w-48 h-1.5 overflow-hidden rounded-full bg-[#E8F3F1] dark:bg-slate-800">
+              <div className="h-full rounded-full bg-[#0B4F4B] transition-all duration-700" style={{ width: `${pct}%` }} />
+            </div>
+          </div>
+        </div>
+        {/* Motivation banner */}
+        <div className={`mt-4 flex items-center gap-2.5 rounded-2xl border px-4 py-3 ${motivColors}`}>
+          <MotivIcon className="h-4 w-4 shrink-0" />
+          <p className="text-sm font-medium">{motivText}</p>
+        </div>
       </header>
 
       {/* Summary cards */}
@@ -1266,10 +1372,20 @@ export function CRMTasksWorkspace() {
       <div className="mb-8">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">Today&apos;s Tasks</h2>
         <div className="overflow-hidden rounded-2xl border border-[#DCE9E6] bg-white dark:border-slate-800 dark:bg-slate-900">
-          {tasks.map((task, idx) => (
+          {tasks.map((task, idx) => {
+            const isExtra = !!task.extraId;
+            const iconKey = isExtra ? "extra" : (task.key as string);
+            const TaskIcon = TASK_ICONS[iconKey] ?? AlertTriangle;
+            return (
             <div key={task.key} className={`flex items-center gap-4 px-5 py-4 ${task.priority && !task.done ? "bg-amber-50 dark:bg-amber-950/20" : ""} ${idx < tasks.length - 1 ? "border-b border-[#DCE9E6] dark:border-slate-800" : ""}`}>
-              <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${task.done ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : task.priority ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300" : "bg-slate-100 text-slate-500 dark:bg-slate-800"}`}>
-                {task.done ? <Check className="h-4 w-4" /> : task.num}
+              {/* Icon + status */}
+              <div className="relative shrink-0">
+                <div className={`grid h-10 w-10 place-items-center rounded-xl ${task.done ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400" : task.priority ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300" : "bg-[#E8F3F1] text-[#0B4F4B] dark:bg-[#133E3C] dark:text-[#8FD4C6]"}`}>
+                  {task.done ? <Check className="h-5 w-5" /> : <TaskIcon className="h-5 w-5" />}
+                </div>
+                <span className={`absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold ${task.done ? "bg-emerald-500 text-white" : task.priority ? "bg-amber-500 text-white" : "bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-300"}`}>
+                  {task.num}
+                </span>
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
@@ -1295,6 +1411,18 @@ export function CRMTasksWorkspace() {
                   <Button size="sm" onClick={() => setModal("knowledge")}>
                     {knowledgeCount > 0 ? "Add more" : "Start"} <ChevronRight className="h-3 w-3" />
                   </Button>
+                ) : isExtra ? (
+                  task.done ? null : (
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        acknowledgeExtraTask(task.extraId!);
+                        setLive(prev => ({ ...prev, extraTasks: prev.extraTasks.map(t => t.id === task.extraId ? { ...t, acknowledged: true } : t) }));
+                      }}
+                    >
+                      Done <Check className="h-3 w-3" />
+                    </Button>
+                  )
                 ) : task.done ? null : (
                   <Button
                     size="sm"
@@ -1308,35 +1436,38 @@ export function CRMTasksWorkspace() {
                 )}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
-      {/* Admin-assigned extra tasks */}
-      {extraTasks.length > 0 && (
-        <div className="overflow-hidden rounded-2xl border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30">
-          <div className="border-b border-amber-200 px-5 py-3 dark:border-amber-800">
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-700 dark:text-amber-400">Assigned by Admin</p>
-          </div>
-          <div className="divide-y divide-amber-100 dark:divide-amber-900">
-            {extraTasks.map(et => (
-              <div key={et.id} className="flex items-start gap-4 px-5 py-4">
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-slate-900 dark:text-white">{et.note}</p>
-                  {et.deductionDays > 0 && (
-                    <p className="mt-0.5 text-xs font-semibold text-rose-500">Deduction: {et.deductionDays} day(s)</p>
-                  )}
-                  {et.acknowledged && (
-                    <p className="mt-0.5 text-xs text-emerald-600 dark:text-emerald-400">✓ Acknowledged</p>
-                  )}
+      {/* Performance evaluations from management — bonuses/deductions only */}
+      {adjustments.length > 0 && (
+        <div className="rounded-2xl border border-[#DCE9E6] bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
+          <p className="mb-2.5 text-[10px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500">Performance evaluation</p>
+          <div className="flex flex-wrap gap-2">
+            {adjustments.map(a => {
+              const isBonus = a.kind === "bonus";
+              const label = `${a.days}d`;
+              const aTime = completedAt(a.createdAt);
+              return (
+                <div
+                  key={a.id}
+                  className={`flex min-w-0 items-center gap-2 rounded-xl px-3 py-2 text-xs ${isBonus ? "bg-emerald-50 dark:bg-emerald-950/30" : "bg-rose-50 dark:bg-rose-950/40"}`}
+                >
+                  <span className={`shrink-0 text-sm font-black leading-none ${isBonus ? "text-emerald-500" : "text-rose-400"}`}>
+                    {isBonus ? "★" : "▼"}
+                  </span>
+                  <span className="font-medium text-slate-700 dark:text-slate-200" dir={/[؀-ۿ]/.test(a.note) ? "rtl" : "ltr"}>
+                    {a.note}
+                  </span>
+                  <span className={`shrink-0 text-[10px] text-slate-400`}>{aTime}</span>
+                  <span className={`ml-1 shrink-0 rounded-full px-2 py-0.5 font-semibold ${isBonus ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300" : "bg-rose-100 text-rose-600 dark:bg-rose-900 dark:text-rose-300"}`}>
+                    {isBonus ? "+" : "−"}{label}
+                  </span>
                 </div>
-                {!et.acknowledged && (
-                  <Button size="sm" onClick={() => { acknowledgeExtraTask(et.id); setLive(prev => ({ ...prev, extraTasks: prev.extraTasks.map(t => t.id === et.id ? { ...t, acknowledged: true } : t) })); }}>
-                    Acknowledge
-                  </Button>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

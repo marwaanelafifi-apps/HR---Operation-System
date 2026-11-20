@@ -29,7 +29,7 @@ type Blocked =
   | { kind: "imprecise"; accuracy: number; limit: number }
   | { kind: GeoFailure };
 
-const todayKey = () => `opshub-demo-attendance-${new Date().toISOString().slice(0, 10)}`;
+const todayKey = () => { const d = new Date(); return `opshub-demo-attendance-${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
 const clock = (iso: string) => new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit", hour12: true }).format(new Date(iso));
 
 function readRecord(dateStr?: string): DayRecord {
@@ -308,10 +308,13 @@ export function AttendanceWorkspace() {
           {(() => {
             const now = new Date();
             const todayISO = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}`;
-            const todayCRMDeductions = deductionsForEmployeeInMonth(EMPLOYEE_ID, now.getFullYear(), now.getMonth()).filter(d => d.date === todayISO);
+            const todayAllAdj = deductionsForEmployeeInMonth(EMPLOYEE_ID, now.getFullYear(), now.getMonth()).filter(d => d.date === todayISO);
+            const todayCRMDeductions = todayAllAdj.filter(d => (d.kind ?? "deduction") === "deduction");
+            const todayCRMBonuses = todayAllAdj.filter(d => d.kind === "bonus");
             const delayMins = record.checkIn && workSchedule ? calcDelayMinutes(record.checkIn.at, workSchedule) : 0;
             const delayDeductFrac = delayMins > 0 ? deductionForDelay(delayMins, workSchedule!) : 0;
             const hasDeductions = todayCRMDeductions.length > 0 || delayDeductFrac > 0;
+            const hasBonuses = todayCRMBonuses.length > 0;
             return (
               <section className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
                 <h2 className="text-base font-semibold">Today</h2>
@@ -321,23 +324,61 @@ export function AttendanceWorkspace() {
                   <Line label="Check-out" value={record.checkOut ? clock(record.checkOut.at) : "—"} note={record.checkOut ? (record.checkOut.kind === "field" ? `At ${record.checkOut.meetingZone}${record.checkOut.projectName ? ` · ${record.checkOut.projectName}` : ""}` : undefined) : undefined} />
                   <Line label="Worked" value={worked()} />
                 </dl>
-                {hasDeductions && (
-                  <div className="mt-4 rounded-xl border border-rose-100 bg-rose-50 p-3 dark:border-rose-900 dark:bg-rose-950/30">
-                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-rose-600 dark:text-rose-400">Deductions today</p>
-                    <div className="space-y-1.5 text-xs">
-                      {delayDeductFrac > 0 && (
-                        <div className="flex justify-between">
-                          <span className="text-slate-600 dark:text-slate-300">Late arrival ({delayMins} min)</span>
-                          <span className="font-semibold text-rose-600">{deductionLabel(delayDeductFrac)}</span>
+                {(hasDeductions || hasBonuses) && (
+                  <div className="mt-4 space-y-2">
+                    {hasDeductions && (
+                      <div className="overflow-hidden rounded-xl border border-rose-100 dark:border-rose-900">
+                        <div className="flex items-center gap-2 bg-rose-50 px-3 py-2 dark:bg-rose-950/40">
+                          <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-rose-100 text-[10px] font-black text-rose-500 dark:bg-rose-900 dark:text-rose-300">−</span>
+                          <span className="text-xs font-semibold text-rose-600 dark:text-rose-400">Deductions today</span>
                         </div>
-                      )}
-                      {todayCRMDeductions.map(d => (
-                        <div key={d.id} className="flex justify-between">
-                          <span className="text-slate-600 dark:text-slate-300 truncate max-w-[180px]">{d.reason}</span>
-                          <span className="ml-2 font-semibold text-rose-600 shrink-0">-{d.deductionDays} day(s)</span>
+                        <div className="divide-y divide-rose-50 dark:divide-rose-900/40">
+                          {delayDeductFrac > 0 && (
+                            <div className="flex items-center justify-between gap-3 px-3 py-2">
+                              <div className="flex min-w-0 items-center gap-2">
+                                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-rose-300" />
+                                <span className="truncate text-xs text-slate-600 dark:text-slate-300">Late arrival · {delayMins} min</span>
+                              </div>
+                              <span className="shrink-0 rounded-full bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-600 dark:bg-rose-900/60 dark:text-rose-300">{deductionLabel(delayDeductFrac)}</span>
+                            </div>
+                          )}
+                          {todayCRMDeductions.map(d => (
+                            <div key={d.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                              <div className="flex min-w-0 items-center gap-2">
+                                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-rose-300" />
+                                <div className="min-w-0">
+                                  <span className="truncate text-xs text-slate-600 dark:text-slate-300" dir={/[؀-ۿ]/.test(d.reason) ? "rtl" : "ltr"}>{d.reason}</span>
+                                  {d.createdAt && <p className="text-[10px] text-slate-400">{new Date(d.createdAt).toLocaleTimeString("en", { hour: "numeric", minute: "2-digit", hour12: true })}</p>}
+                                </div>
+                              </div>
+                              <span className="shrink-0 rounded-full bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-600 dark:bg-rose-900/60 dark:text-rose-300">−{d.deductionDays}d</span>
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
+                      </div>
+                    )}
+                    {hasBonuses && (
+                      <div className="overflow-hidden rounded-xl border border-emerald-100 dark:border-emerald-900">
+                        <div className="flex items-center gap-2 bg-emerald-50 px-3 py-2 dark:bg-emerald-950/40">
+                          <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-emerald-100 text-[10px] font-black text-emerald-600 dark:bg-emerald-900 dark:text-emerald-300">+</span>
+                          <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">Bonuses today</span>
+                        </div>
+                        <div className="divide-y divide-emerald-50 dark:divide-emerald-900/40">
+                          {todayCRMBonuses.map(b => (
+                            <div key={b.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                              <div className="flex min-w-0 items-center gap-2">
+                                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
+                                <div className="min-w-0">
+                                  <span className="truncate text-xs text-slate-600 dark:text-slate-300" dir={/[؀-ۿ]/.test(b.reason) ? "rtl" : "ltr"}>{b.reason}</span>
+                                  {b.createdAt && <p className="text-[10px] text-slate-400">{new Date(b.createdAt).toLocaleTimeString("en", { hour: "numeric", minute: "2-digit", hour12: true })}</p>}
+                                </div>
+                              </div>
+                              <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300">+{b.deductionDays}d</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
                 {record.checkIn && <button onClick={resetToday} className="mt-4 block text-xs font-semibold text-slate-500 underline-offset-4 hover:text-[#0B4F4B] hover:underline">Reset today&apos;s record (demo only)</button>}
@@ -393,18 +434,21 @@ function MonthView({ monthRecords, workSchedule, crmDeductions = [] }: { monthRe
   }, { daysPresent: 0, lateDays: 0, totalLateMinutes: 0, totalMinutes: 0 });
 
   const absenceDays = Array.from({ length: daysInMonth }, (_, i) => i + 1).filter(d => !offDays.has(d) && !monthRecords[d]?.checkIn);
-  const totalCRMDeductionDays = crmDeductions.reduce((s, d) => s + d.deductionDays, 0);
+  const totalCRMDeductionDays = crmDeductions.filter(d => (d.kind ?? "deduction") === "deduction").reduce((s, d) => s + d.deductionDays, 0);
+  const totalCRMBonusDays = crmDeductions.filter(d => d.kind === "bonus").reduce((s, d) => s + d.deductionDays, 0);
   const totalDelayDeductionDays = Object.entries(monthRecords).reduce((acc, [dayStr, rec]) => {
     const dayNum = parseInt(dayStr, 10);
     if (!rec?.checkIn || offDays.has(dayNum)) return acc;
     const dm = calcDelayMinutes(rec.checkIn.at, workSchedule);
     return dm > 0 ? acc + deductionForDelay(dm, workSchedule) : acc;
   }, 0);
-  const totalDeductionDays = +(totalCRMDeductionDays + totalDelayDeductionDays).toFixed(2);
+  const rawDeductionDays = +(totalCRMDeductionDays + totalDelayDeductionDays).toFixed(2);
+  const netDays = +(rawDeductionDays - totalCRMBonusDays).toFixed(2);
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      {/* Row 1 — attendance stats */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Days present</p>
           <p className="mt-2 text-2xl font-semibold text-emerald-600">{stats.daysPresent}</p>
@@ -423,17 +467,47 @@ function MonthView({ monthRecords, workSchedule, crmDeductions = [] }: { monthRe
         <div className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total hours</p>
           <p className="mt-2 text-2xl font-semibold text-slate-950 dark:text-white">{Math.floor(stats.totalMinutes / 60)}</p>
-          <p className="text-xs text-slate-400">hours worked</p>
+          <p className="text-xs text-slate-400">{stats.daysPresent > 0 ? (stats.totalMinutes / stats.daysPresent / 60).toFixed(1) : "0"} avg / day</p>
         </div>
-        <div className="rounded-2xl border border-[#DCE9E6] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Average</p>
-          <p className="mt-2 text-2xl font-semibold text-slate-950 dark:text-white">{stats.daysPresent > 0 ? (stats.totalMinutes / stats.daysPresent / 60).toFixed(1) : "0"}</p>
-          <p className="text-xs text-slate-400">hours per day</p>
-        </div>
-        <div className={`rounded-2xl border p-5 ${totalDeductionDays > 0 ? "border-rose-200 bg-rose-50 dark:border-rose-800 dark:bg-rose-950/30" : "border-[#DCE9E6] bg-white dark:border-slate-800 dark:bg-slate-900"}`}>
+      </div>
+
+      {/* Row 2 — payroll adjustments */}
+      <div className="grid gap-3 sm:grid-cols-3">
+        {/* Deductions */}
+        <div className={`rounded-2xl border p-5 ${rawDeductionDays > 0 ? "border-rose-200 bg-rose-50 dark:border-rose-800 dark:bg-rose-950/30" : "border-[#DCE9E6] bg-white dark:border-slate-800 dark:bg-slate-900"}`}>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Deductions</p>
-          <p className={`mt-2 text-2xl font-semibold ${totalDeductionDays > 0 ? "text-rose-600" : "text-slate-950 dark:text-white"}`}>{totalDeductionDays > 0 ? `-${totalDeductionDays}` : "0"}</p>
-          <p className="text-xs text-slate-400">day(s) this month</p>
+          <p className={`mt-2 text-2xl font-semibold ${rawDeductionDays > 0 ? "text-rose-600" : "text-slate-400"}`}>
+            {rawDeductionDays > 0 ? `-${rawDeductionDays}d` : "—"}
+          </p>
+          <p className="mt-0.5 text-xs text-slate-400">
+            {totalCRMDeductionDays > 0 && `${totalCRMDeductionDays}d mgmt`}
+            {totalCRMDeductionDays > 0 && totalDelayDeductionDays > 0 && " + "}
+            {totalDelayDeductionDays > 0 && `${totalDelayDeductionDays.toFixed(2)}d late`}
+            {rawDeductionDays === 0 && "none this month"}
+          </p>
+        </div>
+
+        {/* Bonuses */}
+        <div className={`rounded-2xl border p-5 ${totalCRMBonusDays > 0 ? "border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30" : "border-[#DCE9E6] bg-white dark:border-slate-800 dark:bg-slate-900"}`}>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Bonuses</p>
+          <p className={`mt-2 text-2xl font-semibold ${totalCRMBonusDays > 0 ? "text-emerald-700 dark:text-emerald-400" : "text-slate-400"}`}>
+            {totalCRMBonusDays > 0 ? `+${totalCRMBonusDays}d` : "—"}
+          </p>
+          <p className="text-xs text-slate-400">{totalCRMBonusDays > 0 ? "this month" : "none this month"}</p>
+        </div>
+
+        {/* Net balance */}
+        <div className={`rounded-2xl border p-5 ${netDays > 0 ? "border-rose-200 bg-rose-50 dark:border-rose-800 dark:bg-rose-950/30" : netDays < 0 ? "border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30" : "border-[#DCE9E6] bg-white dark:border-slate-800 dark:bg-slate-900"}`}>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Net balance</p>
+          <p className={`mt-2 text-2xl font-semibold ${netDays > 0 ? "text-rose-600" : netDays < 0 ? "text-emerald-700 dark:text-emerald-400" : "text-slate-400"}`}>
+            {netDays > 0 ? `-${netDays}d` : netDays < 0 ? `+${Math.abs(netDays)}d` : "0"}
+          </p>
+          <p className="text-xs text-slate-400">
+            {netDays === 0 && rawDeductionDays === 0 && "no adjustments"}
+            {netDays === 0 && rawDeductionDays > 0 && "bonuses offset deductions"}
+            {netDays > 0 && `after ${totalCRMBonusDays > 0 ? `${totalCRMBonusDays}d bonus` : "no bonus"}`}
+            {netDays < 0 && "net positive this month"}
+          </p>
         </div>
       </div>
 
@@ -453,7 +527,8 @@ function MonthView({ monthRecords, workSchedule, crmDeductions = [] }: { monthRe
             const dm = rec?.checkIn && !isOff ? calcDelayMinutes(rec.checkIn.at, workSchedule) : 0;
             const deductFrac = dm > 0 ? deductionForDelay(dm, workSchedule) : 0;
             const ds = `${year}-${String(month + 1).padStart(2, "0")}-${String(dayNum).padStart(2, "0")}`;
-            const dayCRMDeductions = crmDeductions.filter(d => d.date === ds);
+            const dayCRMDeductions = crmDeductions.filter(d => d.date === ds && (d.kind ?? "deduction") === "deduction");
+            const dayCRMBonuses = crmDeductions.filter(d => d.date === ds && d.kind === "bonus");
 
             const bgColor = isOff ? "bg-slate-100 dark:bg-slate-700" :
               dm > 0 ? "bg-amber-50 dark:bg-amber-950/30" :
@@ -483,11 +558,16 @@ function MonthView({ monthRecords, workSchedule, crmDeductions = [] }: { monthRe
                     {rec.checkOut && <p className="text-slate-500">{Math.floor((new Date(rec.checkOut.at).getTime() - new Date(rec.checkIn.at).getTime()) / 3600000)}h</p>}
                   </div>
                 )}
-                {dayCRMDeductions.length > 0 && (
+                {(dayCRMDeductions.length > 0 || dayCRMBonuses.length > 0) && (
                   <div className="mt-1 space-y-0.5">
                     {dayCRMDeductions.map(d => (
                       <p key={d.id} className="rounded px-1.5 py-0.5 bg-rose-200 text-rose-900 dark:bg-rose-900 dark:text-rose-100 text-xs font-semibold">
                         -{d.deductionDays}d
+                      </p>
+                    ))}
+                    {dayCRMBonuses.map(b => (
+                      <p key={b.id} className="rounded px-1.5 py-0.5 bg-emerald-200 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100 text-xs font-semibold">
+                        +{b.deductionDays}d
                       </p>
                     ))}
                   </div>

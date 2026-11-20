@@ -22,6 +22,8 @@ import {
   X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { DatePicker } from "@/components/ui/date-picker";
+import { UnitTableEditor, emptyUnitRow, unitRowHasContent } from "@/components/ui/unit-table-editor";
 import { employees } from "@/lib/mock-data";
 import {
   DAILY_MEETING_TARGET,
@@ -254,7 +256,7 @@ function VoiceNoteInput({ onTranscript }: { onTranscript: (text: string, lang: "
 const EMPTY_ASSESSMENT: ProjectAssessment = {
   salesName: "", date: today(),
   projectName: "", companyName: "", previousWork: "", location: "",
-  projectArea: "", projectDetails: "", unitTypes: "", pricesAndAcres: "",
+  projectArea: "", projectDetails: "", unitTable: [],
   paymentPlan: "", finishingType: "", construction: "", deliveryDate: "",
   maintenance: "", investorType: "", managementAndOperations: "",
   termsOfContract: "", sellingPoints: "", weaknessPoints: "", additionalNotes: "",
@@ -283,7 +285,7 @@ function ProjectAssessmentFormView({
         </div>
         <div>
           <label className={lbl}>Date *</label>
-          <Input type="date" value={value.date} onChange={set("date")} required />
+          <DatePicker required value={value.date} onChange={v => set("date")({ target: { value: v } } as React.ChangeEvent<HTMLInputElement>)} />
         </div>
         <div>
           <label className={lbl}>Project Name *</label>
@@ -301,13 +303,21 @@ function ProjectAssessmentFormView({
           <label className={lbl}>Project Acres *</label>
           <Input value={value.projectArea} onChange={set("projectArea")} placeholder="e.g. 50 feddan" required />
         </div>
-        <div>
-          <label className={lbl}>Unit Types *</label>
-          <Input value={value.unitTypes} onChange={set("unitTypes")} placeholder="e.g. Studio, 1BR, 2BR…" required />
-        </div>
-        <div>
-          <label className={lbl}>Prices & Acres *</label>
-          <Input value={value.pricesAndAcres} onChange={set("pricesAndAcres")} placeholder="e.g. 55m² from EGP 2.5M" required />
+        <div className="sm:col-span-2">
+          <label className={lbl}>Unit Types, Areas &amp; Prices *</label>
+          <UnitTableEditor
+            rows={value.unitTable ?? []}
+            onRow={(idx, patch) => {
+              const rows = [...(value.unitTable ?? [])];
+              rows[idx] = { ...rows[idx], ...patch };
+              onChange({ ...value, unitTable: rows });
+            }}
+            onAdd={() => onChange({ ...value, unitTable: [...(value.unitTable ?? []), emptyUnitRow()] })}
+            onRemove={idx => {
+              const rows = (value.unitTable ?? []).filter((_, i) => i !== idx);
+              onChange({ ...value, unitTable: rows.length ? rows : [emptyUnitRow()] });
+            }}
+          />
         </div>
         <div>
           <label className={lbl}>Payment Plan *</label>
@@ -379,7 +389,8 @@ function ProjectAssessmentFormView({
 }
 
 function assessmentValid(a: ProjectAssessment): boolean {
-  return !!(a.salesName && a.projectName && a.companyName && a.location && a.projectDetails && a.unitTypes && a.sellingPoints && a.weaknessPoints);
+  const hasUnits = (a.unitTable ?? []).some(unitRowHasContent);
+  return !!(a.salesName && a.projectName && a.companyName && a.location && a.projectDetails && hasUnits && a.sellingPoints && a.weaknessPoints);
 }
 
 // ── Ads Task ──────────────────────────────────────────────────────────────────
@@ -900,7 +911,7 @@ function PerformanceTab() {
       {mode === "day" && dayPerf && (
         <div className="space-y-5">
           <div className="flex items-center gap-3">
-            <Input type="date" value={viewDate} onChange={e => setViewDate(e.target.value)} className="w-auto" />
+            <DatePicker value={viewDate} onChange={setViewDate} className="w-48" />
           </div>
           <div className="grid gap-3 sm:grid-cols-4">
             <Stat label="Ads Task" value={dayPerf.adsTaskDone ? "Done" : "Missing"} tone={dayPerf.adsTaskDone ? "good" : "warn"} />
@@ -1058,7 +1069,7 @@ function ManageTab({ currentUserName }: { currentUserName: string }) {
             </Select>
           </FieldRow>
           <FieldRow label="Date *">
-            <Input type="date" value={form.assignedDate} onChange={setF("assignedDate")} />
+            <DatePicker value={form.assignedDate} onChange={v => setF("assignedDate")({ target: { value: v } } as React.ChangeEvent<HTMLInputElement>)} />
           </FieldRow>
           <FieldRow label="Note / Task *">
             <Textarea value={form.note} onChange={setF("note")} placeholder="Describe the extra task or reason for deduction…" required />

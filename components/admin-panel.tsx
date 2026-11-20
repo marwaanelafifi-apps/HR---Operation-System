@@ -5,12 +5,16 @@ import { getPosition, isShortMapsLink, loadOffice, parseCoordinates, loadUnlocks
 import { loadAssessmentLocks, unlockAssessment, loadDailyTasks, onCRMChanged, type AssessmentLock, type KnowledgeTaskData, type DailyTask } from "@/lib/crm-store";
 import { deleteVisit, loadRequests, onRequestsChanged, type VisitRequest } from "@/lib/requests-store";
 import { loadWorkSchedule, saveWorkSchedule, DEFAULT_SCHEDULE, DAY_NAMES_FULL, formatDayHours, type WorkSchedule, type DaySchedule, type DeductionRule, type SaturdayOffRule } from "@/lib/work-schedule";
-import { Check, ChevronDown, ChevronUp, Clock, Lock, MapPin, Plus, RefreshCw, Shield, Trash2, Unlock, X } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Clock, Lock, MapPin, Plus, RefreshCw, Shield, Trash2, Unlock, Users, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { zones as defaultZones, attendanceUnlocks as defaultUnlocks } from "@/lib/mock-data";
+import { DatePicker } from "@/components/ui/date-picker";
+import { zones as defaultZones, attendanceUnlocks as defaultUnlocks, employees } from "@/lib/mock-data";
+import { HRRequestsHistory } from "@/components/hr-requests-history";
+import { addDepartment, deleteDepartment, loadDepartments, onDepartmentsChanged, saveDepartment, type Department } from "@/lib/departments-store";
+import { AnnouncementsWorkspace } from "@/components/announcements-workspace";
 
-type Tab = "office-schedule" | "zones" | "attendance" | "permissions" | "assessment-locks" | "meetings" | "knowledge-submissions";
+type Tab = "office-schedule" | "zones" | "attendance" | "permissions" | "assessment-locks" | "meetings" | "hr-requests" | "departments" | "announcements";
 
 // Role × Permission matrix
 const ROLES = ["CEO / Owner", "Finance", "Sales Manager", "Broker", "Operations Admin", "Marketeer"];
@@ -41,7 +45,7 @@ export function AdminPanel() {
     <div>
       {/* Tab bar */}
       <div className="mb-6 flex max-w-full gap-1 overflow-x-auto rounded-2xl border border-[#DCE9E6] bg-white p-1 shadow-sm dark:border-slate-800 dark:bg-slate-900 w-fit">
-        {([["office-schedule", "Office & Schedule"], ["zones", "Zones"], ["attendance", "Attendance locks"], ["permissions", "Role permissions"], ["assessment-locks", "Assessment locks"], ["meetings", "Meetings"], ["knowledge-submissions", "Projects in Market"]] as [Tab, string][]).map(([key, label]) => (
+        {([["office-schedule", "Office & Schedule"], ["zones", "Zones"], ["attendance", "Attendance locks"], ["permissions", "Role permissions"], ["assessment-locks", "Assessment locks"], ["meetings", "Meetings"], ["hr-requests", "HR Requests"], ["departments", "Departments"], ["announcements", "Announcements"]] as [Tab, string][]).map(([key, label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -58,7 +62,21 @@ export function AdminPanel() {
       {tab === "permissions" && <PermissionsTab />}
       {tab === "assessment-locks" && <AssessmentLocksTab />}
       {tab === "meetings" && <MeetingsTab />}
-      {tab === "knowledge-submissions" && <KnowledgeSubmissionsTab />}
+      {tab === "hr-requests" && (
+        <div className="p-6 space-y-4">
+          <div>
+            <h2 className="text-base font-semibold text-slate-950 dark:text-white">HR Requests — All Employees</h2>
+            <p className="mt-1 text-sm text-slate-500">Full history of excuse, vacation, and HR letter requests across all employees with timestamps.</p>
+          </div>
+          <HRRequestsHistory showEmployeeColumn={true} />
+        </div>
+      )}
+      {tab === "departments" && <DepartmentsTab />}
+      {tab === "announcements" && (
+        <div className="p-6">
+          <AnnouncementsWorkspace />
+        </div>
+      )}
     </div>
   );
 }
@@ -193,8 +211,7 @@ function KnowledgeSubmissionsTab() {
     ["location", "Location"],
     ["projectArea", "Project Acres"],
     ["projectDetails", "Project Details & Facilities"],
-    ["unitTypes", "Unit Types"],
-    ["pricesAndAcres", "Prices & Acres"],
+    ["unitTable", "Unit Types, Built up Areas & Prices"],
     ["paymentPlan", "Payment Plan"],
     ["finishingType", "Finishing Type"],
     ["construction", "Construction"],
@@ -230,12 +247,7 @@ function KnowledgeSubmissionsTab() {
           <option value="all">All employees</option>
           {empNames.map(n => <option key={n} value={n}>{n}</option>)}
         </select>
-        <input
-          type="date"
-          value={filterDate}
-          onChange={e => setFilterDate(e.target.value)}
-          className="rounded-xl border border-[#DCE9E6] bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
-        />
+        <DatePicker value={filterDate} onChange={setFilterDate} className="w-48" />
         {filterDate && (
           <button onClick={() => setFilterDate("")} className="rounded-xl border border-[#DCE9E6] px-3 py-2 text-xs font-semibold text-slate-500 hover:text-[#0B4F4B] dark:border-slate-700">
             Clear date
@@ -966,6 +978,136 @@ function PermissionsTab() {
           {saved ? <><Check className="h-4 w-4" /> Saved</> : "Save permissions"}
         </Button>
         <span className="ml-3 text-xs text-slate-400">Demo only — changes persist in this session.</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Departments Tab ───────────────────────────────────────────────────────────
+
+function DepartmentsTab() {
+  const [depts, setDepts] = useState<Department[]>([]);
+  const [newName, setNewName] = useState("");
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState<Record<string, string>>({});
+  const [confirmDel, setConfirmDel] = useState<string | null>(null);
+
+  useEffect(() => {
+    const refresh = () => setDepts(loadDepartments());
+    refresh();
+    return onDepartmentsChanged(refresh);
+  }, []);
+
+  function handleAdd(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newName.trim()) return;
+    addDepartment(newName.trim());
+    setNewName("");
+  }
+
+  function toggleMember(dept: Department, empId: string) {
+    const updated = dept.memberIds.includes(empId)
+      ? { ...dept, memberIds: dept.memberIds.filter(id => id !== empId) }
+      : { ...dept, memberIds: [...dept.memberIds, empId] };
+    saveDepartment(updated);
+  }
+
+  function renameDept(dept: Department) {
+    const name = editingName[dept.id]?.trim();
+    if (!name || name === dept.name) { setEditingName(e => ({ ...e, [dept.id]: "" })); return; }
+    saveDepartment({ ...dept, name });
+    setEditingName(e => ({ ...e, [dept.id]: "" }));
+  }
+
+  return (
+    <div className="p-6 space-y-6">
+      <div>
+        <h2 className="text-base font-semibold text-slate-950 dark:text-white">Departments &amp; Groups</h2>
+        <p className="mt-1 text-sm text-slate-500">Create groups and assign employees. These groups are used in announcement targeting.</p>
+      </div>
+
+      <form onSubmit={handleAdd} className="flex gap-2">
+        <input
+          value={newName}
+          onChange={e => setNewName(e.target.value)}
+          placeholder="New department or group name…"
+          className="flex-1 rounded-xl border border-[#DCE9E6] bg-transparent px-3.5 py-2.5 text-sm outline-none transition focus:border-[#0B4F4B] dark:border-slate-700"
+        />
+        <Button type="submit" disabled={!newName.trim()} className="bg-[#0B4F4B] text-white hover:bg-[#063C39] disabled:opacity-60">
+          <Plus className="h-4 w-4" /> Add
+        </Button>
+      </form>
+
+      <div className="space-y-3">
+        {depts.length === 0 && (
+          <p className="rounded-2xl border border-dashed border-[#DCE9E6] p-8 text-center text-sm text-slate-400 dark:border-slate-700">No departments yet.</p>
+        )}
+        {depts.map(dept => (
+          <div key={dept.id} className="rounded-2xl border border-[#DCE9E6] bg-white dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-center gap-3 px-5 py-4">
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-[#E8F3F1] dark:bg-[#133E3C]">
+                <Users className="h-4 w-4 text-[#0B4F4B] dark:text-[#8FD4C6]" />
+              </span>
+
+              {editingName[dept.id] ? (
+                <input
+                  autoFocus
+                  value={editingName[dept.id]}
+                  onChange={e => setEditingName(n => ({ ...n, [dept.id]: e.target.value }))}
+                  onBlur={() => renameDept(dept)}
+                  onKeyDown={e => { if (e.key === "Enter") renameDept(dept); if (e.key === "Escape") setEditingName(n => ({ ...n, [dept.id]: "" })); }}
+                  className="flex-1 rounded-xl border border-[#0B4F4B] bg-transparent px-3 py-1.5 text-sm font-semibold outline-none dark:border-[#8FD4C6]"
+                />
+              ) : (
+                <button
+                  onClick={() => setEditingName(n => ({ ...n, [dept.id]: dept.name }))}
+                  className="flex-1 text-left text-sm font-semibold text-slate-900 hover:text-[#0B4F4B] dark:text-white dark:hover:text-[#8FD4C6]"
+                  title="Click to rename"
+                >
+                  {dept.name}
+                </button>
+              )}
+
+              <span className="rounded-full bg-[#E8F3F1] px-2 py-0.5 text-xs font-semibold text-[#0B4F4B] dark:bg-[#133E3C] dark:text-[#8FD4C6]">
+                {dept.memberIds.length} member{dept.memberIds.length !== 1 ? "s" : ""}
+              </span>
+
+              <button onClick={() => setExpanded(e => e === dept.id ? null : dept.id)}
+                className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:text-[#0B4F4B] dark:hover:text-[#8FD4C6]">
+                {expanded === dept.id ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              </button>
+
+              {confirmDel === dept.id ? (
+                <div className="flex gap-1">
+                  <Button size="sm" className="bg-rose-600 text-white hover:bg-rose-700" onClick={() => { deleteDepartment(dept.id); setConfirmDel(null); }}>Delete</Button>
+                  <Button size="sm" variant="outline" onClick={() => setConfirmDel(null)}>Cancel</Button>
+                </div>
+              ) : (
+                <button onClick={() => setConfirmDel(dept.id)}
+                  className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40">
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+
+            {expanded === dept.id && (
+              <div className="border-t border-[#DCE9E6] px-5 py-4 dark:border-slate-800">
+                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Select members</p>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {employees.map(emp => (
+                    <label key={emp.id} className={`flex cursor-pointer items-center gap-2.5 rounded-xl border p-2.5 transition ${dept.memberIds.includes(emp.id) ? "border-[#0B4F4B] bg-[#E8F3F1] dark:border-[#8FD4C6]/50 dark:bg-[#133E3C]" : "border-[#DCE9E6] hover:border-[#0B4F4B]/40 dark:border-slate-700"}`}>
+                      <input type="checkbox" checked={dept.memberIds.includes(emp.id)} onChange={() => toggleMember(dept, emp.id)} className="h-4 w-4 accent-[#0B4F4B]" />
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-slate-900 dark:text-white">{emp.name}</p>
+                        <p className="truncate text-xs text-slate-400">{emp.role}</p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
