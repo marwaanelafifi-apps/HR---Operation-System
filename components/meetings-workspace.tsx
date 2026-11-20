@@ -234,7 +234,7 @@ function EmptyState({ tab, onNew }: { tab: Tab; onNew: () => void }) {
 
 // ─── Details / close dialog ───────────────────────────────────────────────────
 
-function DetailsDialog({ visit, onClose }: { visit: VisitRequest; onClose: () => void }) {
+export function DetailsDialog({ visit, onClose }: { visit: VisitRequest; onClose: () => void }) {
   const [closing, setClosing] = useState(false);
   const [outcome, setOutcome] = useState("");
   const [cost, setCost] = useState("");

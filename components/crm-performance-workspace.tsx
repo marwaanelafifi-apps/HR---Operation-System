@@ -19,6 +19,7 @@ import {
 } from "@/lib/crm-store";
 import { customTaskAppliesToDate, loadCRMTaskConfig } from "@/lib/crm-task-config";
 import { loadRequests, type VisitRequest } from "@/lib/requests-store";
+import { DetailsDialog } from "@/components/meetings-workspace";
 import { employees } from "@/lib/mock-data";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -322,6 +323,7 @@ function RequestsDetail({ requests, target }: { requests: CRMRequest[]; target: 
 // ── Meetings detail panel ─────────────────────────────────────────────────────
 function MeetingsDetail({ meetings, done }: { meetings: VisitRequest[]; done: boolean }) {
   const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState<VisitRequest | null>(null);
   const count = meetings.length;
   return (
     <div className="mb-4 rounded-xl border border-[#DCE9E6] dark:border-slate-700">
@@ -350,18 +352,30 @@ function MeetingsDetail({ meetings, done }: { meetings: VisitRequest[]; done: bo
                     {m.status}
                   </Badge>
                 )}
+                <button
+                  onClick={e => { e.stopPropagation(); setSelected(m); }}
+                  className="ml-1 rounded-md px-2 py-0.5 text-[10px] font-semibold text-[#0B4F4B] hover:bg-[#E8F3F1] dark:text-[#8FD4C6] dark:hover:bg-slate-700"
+                >
+                  View
+                </button>
               </div>
               <div className="ml-7 flex flex-wrap gap-x-4 gap-y-1 text-slate-500">
                 {m.projectName && <span><span className="font-medium text-slate-600 dark:text-slate-300">Project:</span> {m.projectName}</span>}
                 {m.zone && <span><span className="font-medium text-slate-600 dark:text-slate-300">Zone:</span> {m.zone}</span>}
                 {m.time && <span><span className="font-medium text-slate-600 dark:text-slate-300">Time:</span> {m.time}</span>}
                 {m.meetingLocation && <span><span className="font-medium text-slate-600 dark:text-slate-300">Location:</span> {m.meetingLocation}</span>}
-                {m.notes && <span className="w-full"><span className="font-medium text-slate-600 dark:text-slate-300">Notes:</span> {m.notes}</span>}
+                <span className="w-full">
+                  <span className="font-medium text-slate-600 dark:text-slate-300">
+                    {m.outcomeNotes ? "Outcome:" : "Notes:"}
+                  </span>{" "}
+                  {m.outcomeNotes || m.notes || <span className="italic text-slate-400">No notes</span>}
+                </span>
               </div>
             </div>
           ))}
         </div>
       )}
+      {selected && <DetailsDialog visit={selected} onClose={() => setSelected(null)} />}
     </div>
   );
 }

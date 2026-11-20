@@ -27,6 +27,7 @@ import {
   loadCRMTaskConfig, onCRMTaskConfigChanged, customTaskAppliesToDate,
   type CRMTasksConfig, type CustomTask,
 } from "@/lib/crm-task-config";
+import { loadWorkSchedule } from "@/lib/work-schedule";
 import { employees } from "@/lib/mock-data";
 
 // ── Demo identity ─────────────────────────────────────────────────────────────
@@ -175,6 +176,67 @@ const EMPTY_ASSESSMENT: ProjectAssessment = {
   owner: "",
 };
 
+// Defined outside KnowledgeTaskForm to prevent remount on every keystroke
+function KnowledgeField({ label, k, placeholder, fieldType, options, required: isRequired, stretch,
+  value, unitRows, voiceSupported, isRecording,
+  onChangeText, onChangeDate, onVoiceToggle,
+  onUnitRow, onUnitAdd, onUnitRemove,
+}: {
+  label: string; k: keyof ProjectAssessment;
+  placeholder?: string; fieldType?: "text" | "date" | "dropdown" | "textarea" | "unitTable";
+  options?: string[]; required?: boolean; stretch?: boolean;
+  value: string; unitRows: UnitRow[]; voiceSupported: boolean; isRecording: boolean;
+  onChangeText: (k: keyof ProjectAssessment, v: string) => void;
+  onChangeDate: (k: keyof ProjectAssessment, v: string) => void;
+  onVoiceToggle: (k: keyof ProjectAssessment) => void;
+  onUnitRow: (idx: number, patch: Partial<UnitRow>) => void;
+  onUnitAdd: () => void;
+  onUnitRemove: (idx: number) => void;
+}) {
+  const isVoiceField = fieldType === "textarea" && voiceSupported;
+  return (
+    <div className={stretch ? "flex h-full flex-col" : ""}>
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className={labelCls}>
+          {label}{isRequired && <span className="ml-0.5 text-rose-400">*</span>}
+        </span>
+        {isVoiceField && (
+          <button
+            type="button"
+            onClick={() => onVoiceToggle(k)}
+            className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold transition ${
+              isRecording
+                ? "animate-pulse bg-rose-100 text-rose-600 hover:bg-rose-200 dark:bg-rose-950 dark:text-rose-300"
+                : "bg-[#E8F3F1] text-[#0B4F4B] hover:bg-[#D0EDE9] dark:bg-[#0B2927] dark:text-[#8FD4C6]"
+            }`}
+          >
+            {isRecording
+              ? <><MicOff className="h-3 w-3" /> Stop</>
+              : <Mic className="h-3 w-3" />
+            }
+          </button>
+        )}
+      </div>
+      {fieldType === "unitTable" ? (
+        <UnitTableEditor rows={unitRows} onRow={onUnitRow} onAdd={onUnitAdd} onRemove={onUnitRemove} />
+      ) : fieldType === "dropdown" && options ? (
+        <select value={value} onChange={e => onChangeText(k, e.target.value)}
+          className={`${inputCls} bg-white dark:bg-slate-900`}>
+          <option value="">— Select —</option>
+          {options.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+      ) : fieldType === "textarea" ? (
+        <textarea rows={3} value={value} onChange={e => onChangeText(k, e.target.value)} placeholder={placeholder}
+          className={`${inputCls} resize-none${stretch ? " flex-1" : ""}${isRecording ? " ring-2 ring-rose-300 dark:ring-rose-700" : ""}`} />
+      ) : fieldType === "date" ? (
+        <DatePicker value={value} onChange={v => onChangeDate(k, v)} />
+      ) : (
+        <input type="text" value={value} onChange={e => onChangeText(k, e.target.value)} placeholder={placeholder} className={inputCls} />
+      )}
+    </div>
+  );
+}
+
 function KnowledgeTaskForm({ date, onDone, fieldCfg }: { date: string; onDone: () => void; fieldCfg?: import("@/lib/crm-task-config").KnowledgeFieldConfig[] }) {
   const startedAt = useRef(Date.now());
   const [form, setForm] = useState<ProjectAssessment>({ ...EMPTY_ASSESSMENT, salesName: ME_NAME, date });
@@ -247,60 +309,24 @@ function KnowledgeTaskForm({ date, onDone, fieldCfg }: { date: string; onDone: (
     onDone();
   }
 
-  // Textarea fields with voice support (all textareas — text/dropdown/date fields excluded naturally)
-  function Field({ label, ar: _ar, k, placeholder, fieldType, options, required: isRequired, stretch }: {
-    label: string; ar: string; k: keyof ProjectAssessment;
-    placeholder?: string; fieldType?: "text" | "date" | "dropdown" | "textarea" | "unitTable"; options?: string[]; required?: boolean; stretch?: boolean;
-  }) {
-    const isVoiceField = fieldType === "textarea" && voiceSupported;
-    const isThisRecording = recordingField === k;
-    const sv = typeof form[k] === "string" ? (form[k] as string) : "";
-    return (
-      <div className={stretch ? "flex h-full flex-col" : ""}>
-        <div className="mb-1.5 flex items-center justify-between">
-          <span className={labelCls}>
-            {label}{isRequired && <span className="ml-0.5 text-rose-400">*</span>}
-          </span>
-          {isVoiceField && (
-            <button
-              type="button"
-              onClick={() => isThisRecording ? stopVoice() : startVoice(k)}
-              className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold transition ${
-                isThisRecording
-                  ? "animate-pulse bg-rose-100 text-rose-600 hover:bg-rose-200 dark:bg-rose-950 dark:text-rose-300"
-                  : "bg-[#E8F3F1] text-[#0B4F4B] hover:bg-[#D0EDE9] dark:bg-[#0B2927] dark:text-[#8FD4C6]"
-              }`}
-            >
-              {isThisRecording
-                ? <><MicOff className="h-3 w-3" /> Stop</>
-                : <Mic className="h-3 w-3" />
-              }
-            </button>
-          )}
-        </div>
-        {fieldType === "unitTable" ? (
-          <UnitTableEditor
-            rows={form.unitTable ?? []}
-            onRow={setUnitRow}
-            onAdd={addUnitRow}
-            onRemove={removeUnitRow}
-          />
-        ) : fieldType === "dropdown" && options ? (
-          <select value={sv} onChange={e => setField(k, e.target.value)}
-            className={`${inputCls} bg-white dark:bg-slate-900`}>
-            <option value="">— Select —</option>
-            {options.map(o => <option key={o} value={o}>{o}</option>)}
-          </select>
-        ) : fieldType === "textarea" ? (
-          <textarea rows={3} value={sv} onChange={e => setField(k, e.target.value)} placeholder={placeholder}
-            className={`${inputCls} resize-none${stretch ? " flex-1" : ""}${isThisRecording ? " ring-2 ring-rose-300 dark:ring-rose-700" : ""}`} />
-        ) : fieldType === "date" ? (
-          <DatePicker value={sv} onChange={v => setField(k, v)} />
-        ) : (
-          <input type="text" value={sv} onChange={e => setField(k, e.target.value)} placeholder={placeholder} className={inputCls} />
-        )}
-      </div>
-    );
+  function fieldProps(f: { key: keyof ProjectAssessment; labelEn: string; fieldType?: "text" | "date" | "dropdown" | "textarea" | "unitTable"; options?: string[]; required?: boolean }) {
+    return {
+      k: f.key,
+      label: f.labelEn,
+      fieldType: f.fieldType,
+      options: f.options,
+      required: f.required,
+      value: typeof form[f.key] === "string" ? (form[f.key] as string) : "",
+      unitRows: form.unitTable ?? [],
+      voiceSupported,
+      isRecording: recordingField === f.key,
+      onChangeText: setField,
+      onChangeDate: setField,
+      onVoiceToggle: (k: keyof ProjectAssessment) => recordingField === k ? stopVoice() : startVoice(k),
+      onUnitRow: setUnitRow,
+      onUnitAdd: addUnitRow,
+      onUnitRemove: removeUnitRow,
+    };
   }
 
   function renderGrid() {
@@ -312,8 +338,7 @@ function KnowledgeTaskForm({ date, onDone, fieldCfg }: { date: string; onDone: (
       if (f.layout === "full") {
         cells.push(
           <div key={f.key} className="sm:col-span-2">
-            <Field label={f.labelEn} ar={f.labelAr} k={f.key}
-              fieldType={f.fieldType} options={f.options} required={f.required} />
+            <KnowledgeField {...fieldProps(f)} />
           </div>
         );
       } else if (f.layout !== "right" && fields[i + 1]?.layout === "right") {
@@ -323,22 +348,19 @@ function KnowledgeTaskForm({ date, onDone, fieldCfg }: { date: string; onDone: (
         cells.push(
           <div key={f.key + "-flex-pair"} className="flex gap-3 sm:col-span-2">
             <div className="flex flex-1 flex-col">
-              <Field label={f.labelEn} ar={f.labelAr} k={f.key}
-                fieldType={f.fieldType} options={f.options} required={f.required} stretch />
+              <KnowledgeField {...fieldProps(f)} stretch />
             </div>
             <div className="flex flex-1 flex-col gap-2">
               {rightGroup.map(g => (
-                <Field key={g.key} label={g.labelEn} ar={g.labelAr} k={g.key}
-                  fieldType={g.fieldType} options={g.options} required={g.required} />
+                <KnowledgeField key={g.key} {...fieldProps(g)} />
               ))}
             </div>
           </div>
         );
       } else {
         cells.push(
-          <div key={f.key} className={f.layout === "right" ? "" : ""}>
-            <Field label={f.labelEn} ar={f.labelAr} k={f.key}
-              fieldType={f.fieldType} options={f.options} required={f.required} />
+          <div key={f.key}>
+            <KnowledgeField {...fieldProps(f)} />
           </div>
         );
       }
@@ -578,6 +600,9 @@ function MeetingForm({ date, onDone, onCancel }: { date: string; onDone: () => v
   const now = new Date();
   const timeStr = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
 
+  // After-hours check — temporarily disabled for testing
+  const isAfterHours = false;
+
   function set(k: keyof typeof form, v: string) { setForm(prev => ({ ...prev, [k]: v })); }
   const canSubmit = form.clientName.trim() && form.projectName.trim();
 
@@ -596,6 +621,19 @@ function MeetingForm({ date, onDone, onCancel }: { date: string; onDone: () => v
       notes: form.notes.trim(),
     });
     setSubmitted(true);
+  }
+
+  if (isAfterHours) {
+    return (
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-center dark:border-amber-900 dark:bg-amber-950">
+        <Lock className="mx-auto mb-3 h-8 w-8 text-amber-500 dark:text-amber-400" />
+        <p className="font-semibold text-amber-800 dark:text-amber-300">Working hours have ended</p>
+        <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">New meetings can no longer be logged for today.</p>
+        <div className="mt-4 flex justify-center">
+          <Button size="sm" variant="outline" onClick={onCancel}>Close</Button>
+        </div>
+      </div>
+    );
   }
 
   if (submitted) {
