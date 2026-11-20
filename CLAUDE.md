@@ -157,6 +157,14 @@ To run the currently built UI in Docker:
 docker run -d --name opshub-web-local -w /app -p 3000:3000 -e NODE_ENV=production -e PORT=3000 -e HOSTNAME=0.0.0.0 -v "${PWD}\.next\standalone:/app" -v "${PWD}\.next\static:/app/.next/static" -v "${PWD}\public:/app/public" node:24-alpine node server.js
 ```
 
+## Meetings behaviour (additional)
+
+- `OutsideMeetingForm` enforces `min={todayDate()}` on the date picker — today or later is allowed.
+- `MeetingForm` (quick CRM log) has an after-hours guard using `loadWorkSchedule()`: if today's current time ≥ `endHour:endMinute` for the current day, the form shows a blocked card instead of the input fields. Currently **disabled** (`isAfterHours = false`) for testing — re-enable by restoring the schedule check.
+- `DetailsDialog` in `meetings-workspace.tsx` is exported so other workspaces can open the full meeting summary modal.
+- Team Performance (`crm-performance-workspace.tsx`) meeting cards show a **View** button that opens `DetailsDialog` with the full summary (client, location, schedule timestamps, outcome notes, expenses, receipts).
+- Meeting cards in performance always show a Notes/Outcome row: `outcomeNotes` takes priority over `notes`; falls back to *No notes* italic placeholder.
+
 ## Current status
 
 - All builds pass (typecheck + lint + production build).
@@ -164,10 +172,11 @@ docker run -d --name opshub-web-local -w /app -p 3000:3000 -e NODE_ENV=productio
 
 ## Pending / next steps
 
-1. **Admin submissions view** — admin can't yet see Projects in Market submissions.
-2. **CRM Performance** — verify assessment count reflects new multi-submission model.
-3. **History workspace** — old submissions with legacy field names gracefully show only filled fields (confirmed by filter `([, v]) => v`).
-4. **Backend phase** — Ads post-date server verification, real auth, RBAC, persistent storage.
+1. **Re-enable after-hours guard** — restore the `loadWorkSchedule()` check in `MeetingForm` (`crm-tasks-workspace.tsx`) and revert `OutsideMeetingForm` date min back to `tomorrowDate()` after testing is done.
+2. **Admin submissions view** — admin can't yet see Projects in Market submissions.
+3. **CRM Performance** — verify assessment count reflects new multi-submission model.
+4. **History workspace** — old submissions with legacy field names gracefully show only filled fields (confirmed by filter `([, v]) => v`).
+5. **Backend phase** — Ads post-date server verification, real auth, RBAC, persistent storage.
 
 ## Installed project skills
 

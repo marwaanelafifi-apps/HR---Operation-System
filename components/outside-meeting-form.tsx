@@ -24,6 +24,8 @@ const tomorrowDate = () => {
   return d.toISOString().split("T")[0];
 };
 
+const todayDate = () => new Date().toISOString().split("T")[0];
+
 // ─── Custom time picker ───────────────────────────────────────────────────────
 function TimePicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const [raw, setRaw] = useState({ h: "10", m: "00", pm: false });
@@ -134,7 +136,7 @@ export function OutsideMeetingForm({ onDone }: { onDone?: () => void } = {}) {
   const [form, setForm] = useState({
     clientName: "",
     clientNumber: "",
-    date: tomorrowDate(),
+    date: todayDate(),
     time: "10:00",
     zone: "",
     projectName: "",
@@ -165,7 +167,7 @@ export function OutsideMeetingForm({ onDone }: { onDone?: () => void } = {}) {
 
   const resetForm = () => {
     setState("idle");
-    setForm({ clientName: "", clientNumber: "", date: tomorrowDate(), time: "10:00", zone: "", projectName: "", meetingLocation: "", notes: "" });
+    setForm({ clientName: "", clientNumber: "", date: todayDate(), time: "10:00", zone: "", projectName: "", meetingLocation: "", notes: "" });
     setPhoneError(null);
   };
 
@@ -230,8 +232,8 @@ export function OutsideMeetingForm({ onDone }: { onDone?: () => void } = {}) {
           {/* Section: Schedule */}
           <SectionLabel className="mt-7">Schedule</SectionLabel>
           <div className="mt-3 grid gap-4 sm:grid-cols-2">
-            <IconField label="Date" icon={<Calendar className="h-4 w-4" />} required hint="Tomorrow or later">
-              <DatePicker required value={form.date} min={tomorrowDate()} onChange={v => setForm({ ...form, date: v })} />
+            <IconField label="Date" icon={<Calendar className="h-4 w-4" />} required hint="Today or later">
+              <DatePicker required value={form.date} min={todayDate()} onChange={v => setForm({ ...form, date: v })} />
             </IconField>
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Time <span className="text-rose-500">*</span></label>
